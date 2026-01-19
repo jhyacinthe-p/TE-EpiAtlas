@@ -1,0 +1,8 @@
+numpy==1.26.4+computecanada
+pandas==2.3.3+computecanada
+pybedtools==0.10.0+computecanada
+pysam==0.23.3+computecanada
+python_dateutil==2.9.0.post0+computecanada
+pytz==2025.2+computecanada
+six==1.17.0+computecanada
+tzdata==2025.3+computecanada
