@@ -1,0 +1,3445 @@
+---
+title: "TE_figures"
+output: 
+  html_document:
+    df_print: paged
+    toc: true
+    toc_depth: 3
+    toc_float: true
+params:
+  input: ../demo_data/core_data_test.Rdata
+  start_path: ../files
+---
+
+ 
+
+ ../demo_data/epiatlas_core_data_test.Rdata
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      fig.width=12, fig.height=8,
+                      results = "hide",
+                      warning = FALSE,
+                      fig.path='Figs/',
+                      message=FALSE,
+                      collapse=TRUE)
+
+library(readr)
+library(readxl)
+library(ggplot2)
+library(ggrepel)
+library(tibble)
+library(reshape2)
+library(RColorBrewer)
+library(tidyr)
+library(dplyr)
+library(scales)
+library(ggnewscale)
+library(ggpubr)
+library(pals)
+library(circlize)
+library(viridis)
+library(patchwork)
+library(DT)
+library(ComplexHeatmap)
+library(jsonlite)
+#library(rmarkdown)
+
+#Fig 1
+library(grid)
+library(umap)
+#library(htmltools)
+#Fig 2
+# install.packages(c("ggplot2","ggrepel","reshape2","RColorBrewer","circlize","viridis","Hmisc","corrplot","apcluster","gridExtra","grid","ggpubr","scales","Rtsne","umap","dplyr","ggnewscale","pals","quantreg","jsonlite","VennDiagram","DT"))
+# 
+# install.packages(c("readr","readxl","tibble","ggplot2","ggrepel","reshape2","RColorBrewer","circlize","viridis","Hmisc","apcluster","gridExtra","grid","ggpubr","scales","umap","dplyr","ggnewscale","pals","quantreg","jsonlite","DT","patchwork"))
+# library(devtools)
+# install_github("jokergoo/ComplexHeatmap")
+
+#library(factoextra)#not working
+
+select  <- dplyr::select
+'%notin%' <- function(x,y)!('%in%'(x,y))
+
+default_scale_fill_manual <- scale_fill_manual
+default_scale_color_manual <- scale_color_manual
+```
+
+# Main setup and loading
+
+
+```{r setup_param}
+#params:
+#  input: /scratch/code/testcore2_data.Rdata
+#variables
+start_path = params$start_path##"/home/jhyaci/scratch"
+#- params
+save_tables = FALSE
+load_tables = TRUE
+genome_size= 3234830000
+trials = 1000#5#
+threshold = 0.005#0.5#
+stringent=TRUE#FALSE
+calculate_gc = FALSE
+calculate_dist = FALSE
+show_times = TRUE
+
+source(paste0(start_path,"/lib/repeat_analysis_helper.R"))
+datatable(matrix())
+```
+
+
+
+## to add to source
+```{r setup_path, eval=FALSE, echo=FALSE}
+
+# OS <- get_os()
+# os_path <- function(path)
+# {
+#   start_path = switch(OS, windows = "G:", osx = "~/Google Drive File Stream",linux = "/home/jhyaci/scratch")
+#   return(paste0(start_path,path))
+# }
+maxN <- function(x, N=2){
+    len <- length(x)
+    if(N>len){
+        warning('N greater than length(x).  Setting N=length(x)')
+        N <- length(x)
+    }
+    sort(x,partial=len-N+1)[len-N+1]
+}
+stat_box_data <- function(x) {
+  #max(count_obs_exp_percent), upper_limit = topy * 1.15
+  return( 
+    data.frame(
+      y = 0,#0.95 * upper_limit,
+      label = paste(#'n =', 
+                    format(length(x), big.mark = ",", decimal.mark = ".", scientific = FALSE)#, 
+                    #'\n',
+                    #'mean =', 
+                    #format(round(mean(x), 5), big.mark = ",", decimal.mark = ".", scientific = FALSE)
+                    )
+    )
+  )
+}
+
+overall_p <- function(my_model) {
+    f <- summary(my_model)$fstatistic
+    p <- pf(f[1],f[2],f[3],lower.tail=F)
+    attributes(p) <- NULL
+    return(p)
+}
+
+strlim <- function(s, lim = 24){
+  return( ifelse(nchar(s)>lim,paste0(substr(s,1,lim),"..."),s))
+}
+
+filter_lims <- function(x){
+  l <- boxplot.stats(x)$stats[1]
+  u <- boxplot.stats(x)$stats[5]
+
+  for (i in 1:length(x)){
+    x[i] <- ifelse(x[i]>l & x[i]<u, x[i], NA)
+  }
+  return(x)
+}
+
+make_type_to_cat <- function()
+{
+  tmprep <- unlist(lapply(names(ihecjson_table$datasets), function(x) 
+    ifelse(!is.null(ihecjson_table$datasets[[x]]$ihec_data_portal$cell_type),ihecjson_table$datasets[[x]]$ihec_data_portal$cell_type,"NA")))
+tmprep_cat <- unlist(lapply(names(ihecjson_table$datasets), function(x) 
+    ifelse(!is.null(ihecjson_table$datasets[[x]]$ihec_data_portal$cell_type_category),ihecjson_table$datasets[[x]]$ihec_data_portal$cell_type_category,"NA")))
+  tmprep38<- data.frame(cbind(name= tmprep,category = tmprep_cat))
+  #hg19
+  tmprep <- unlist(lapply(names(ihec19json_table$datasets), function(x) 
+    ifelse(!is.null(ihec19json_table$datasets[[x]]$ihec_data_portal$cell_type),ihec19json_table$datasets[[x]]$ihec_data_portal$cell_type,"NA")))
+tmprep_cat <- unlist(lapply(names(ihec19json_table$datasets), function(x) 
+    ifelse(!is.null(ihec19json_table$datasets[[x]]$ihec_data_portal$cell_type_category),ihec19json_table$datasets[[x]]$ihec_data_portal$cell_type_category,"NA")))
+#merge
+  tmprep19<- data.frame(cbind(name= tmprep,category = tmprep_cat))
+  tmprep <- rbind(tmprep19,tmprep38)
+  tmprep <- dplyr::distinct(tmprep)
+  tmprep <- col_to_rownames(tmprep,1)
+  return(tmprep)
+}
+
+make_epirr <- function()
+{
+  tmprep <- unlist(lapply(strsplit(names(ihecjson_table$datasets),"_"), `[[`, 1))
+tmprep_id <- unlist(lapply(names(ihecjson_table$datasets), function(x) 
+    ifelse(!is.null(ihecjson_table$datasets[[x]]$experiment_attributes$reference_registry_id),ihecjson_table$datasets[[x]]$experiment_attributes$reference_registry_id,"NA")))
+tmprep_cell <- unlist(lapply(names(ihecjson_table$datasets), function(x) 
+    ifelse(!is.null(ihecjson_table$datasets[[x]]$ihec_data_portal$cell_type),ihecjson_table$datasets[[x]]$ihec_data_portal$cell_type,"NA")))
+  tmprep<- data.frame(cbind(epirr_id = unlist(lapply(strsplit(tmprep_id,"\\."), `[[`, 1)),name= tmprep, cell = tmprep_cell))
+  tmprep38 <- dplyr::distinct(tmprep)
+  #tmprep <- col_to_rownames(tmprep,1)
+
+#HG19
+
+tmprep <- unlist(names(ihec19json_table$datasets))
+tmprep_id <- unlist(lapply(names(ihec19json_table$datasets), function(x) 
+    ifelse(!is.null(ihec19json_table$datasets[[x]]$experiment_attributes$reference_registry_id),ihec19json_table$datasets[[x]]$experiment_attributes$reference_registry_id,"NA")))
+tmprep_cell <- unlist(lapply(names(ihec19json_table$datasets), function(x) 
+    ifelse(!is.null(ihec19json_table$datasets[[x]]$ihec_data_portal$cell_type),ihec19json_table$datasets[[x]]$ihec_data_portal$cell_type,"NA")))
+  tmprep<- data.frame(cbind(epirr_id = unlist(lapply(strsplit(tmprep_id,"\\."), `[[`, 1)),name= tmprep, cell = tmprep_cell))
+  tmprep19 <- dplyr::distinct(tmprep)
+  tmprep <- rbind(tmprep38, tmprep19)
+  epirr_table <- dplyr::distinct(tmprep)
+  return(epirr_table)
+}
+
+rename_cell <- function(cname)
+{
+  sample_row = cell_rename_table[match(cname, cell_rename_table$name),]
+  return(ifelse(is.na(sample_row$`New name`), cname,sample_row$`New name`))
+}
+
+autoscale_centered <- function(vals,numb)
+{
+  valextrem = max(abs(vals))
+  return(seq(from = -valextrem, to = valextrem, length.out = numb))
+}
+
+autoscale_centered_percentile <- function(vals,numb,perc)
+{
+  valextrem = max(abs(quantile(vals, perc)), abs(quantile(vals, 1-perc)))
+  return(seq(from = -valextrem, to = valextrem, length.out = numb))
+}
+#width = "100%",
+print_DT <- function(in_data,...){tryCatch(datatable(in_data,height = "100%", ... ),
+           error=function(cond) {
+            message("Here's the original error message:")
+            message(cond)
+            message("\n")
+            print(in_data)
+            return(NA)
+        },
+        warning=function(cond) {
+            message("Here's the original warning message:")
+            message(cond)
+            message("\n")
+            return(NULL)
+        })
+}
+
+sortcaseless <- function(mylist){
+  return(mylist[order(tolower(as.character(mylist)))])
+}
+
+
+```
+
+## Load data and meta data
+
+```{r setup_metadata}
+exp_path = paste0(start_path,"/data/Joint_experiment_xmlparseout.csv")
+samp_path = paste0(start_path,"/data/Joint_sample_xmlparseout.csv")
+megadata_path = paste0(start_path,"/data/megadata.csv")
+ihec_path = paste0(start_path,"/new_data/all_ihec/samples-17495.csv")
+ihecjson_path = paste0(start_path,"/new_data/all_ihec/metadata_17496.json")
+ihec19json_path = paste0(start_path,"/data/hg19_portal_json.json")
+epidata_path = paste0(start_path,"/data/epiatlas_metadata_23022023.csv")
+cell_rename_table_path = paste0(start_path,"/data/cell_renaming_table.csv")
+epidata2022_path = paste0(start_path,"/data/IHEC_metadata_harmonization.v1.2.csv")
+epimerge_path = paste0(start_path,"/data/IHEC Epigenome Order_sorted_by_merged_ontology.csv")
+mapability_path <- paste0(start_path, "/repeatcoverage_test_table.tsv")
+#- extra info
+exp_table <- read_csv(exp_path)
+sample_table <- read_csv(samp_path)
+mega_table <- read_csv(megadata_path)
+ihec_table <- read_csv(ihec_path)
+epiatlas_metadata <- read_csv(epidata2022_path)
+#epiatlas_metadata_test <- read_csv(paste0(start_path,"/code/data/IHEC_metadata_harmonization.v1.0.csv"))
+ihecjson_table <- jsonlite::fromJSON( ihecjson_path )
+ihec19json_table <- jsonlite::fromJSON( ihec19json_path )
+epiatlas_table <- read_csv(epidata_path)
+cell_type_to_cat <- make_type_to_cat()
+cell_rename_table <- read_csv(cell_rename_table_path)
+mappability_table <- read_tsv(mapability_path, col_names = c("name","prop"))
+
+
+renaming = FALSE
+if(identical(sort(rownames(cell_type_to_cat)),sort(cell_rename_table$name)))
+{
+  renaming = TRUE
+  cell_type_to_cat <- column_to_rownames(select(cell_rename_table,"New name","New category")[!duplicated(cell_rename_table$`New name`),],"New name")
+} else {
+  print("Cell Types involved not the same as those accounted for by the curation. Using raw cell types")
+}
+epirr_table <- make_epirr()
+alu_list = c("AluYa5","AluY","AluYb8","AluSp","AluSc","AluSg","AluSq","AluSx","AluJo","AluJb")
+```
+
+
+## Load data
+
+```{r data_load}
+
+group_folders = list("ihec"=paste0(start_path,"/analyze_peaks_results/ihec_june"))
+
+#default is a test subset dataset
+load_file <- params$input#"~/scratch/code/main_core_data.Rdata""/scratch/code/testcore2_data.Rdata"#"core_ihec3220_objects.RData"#"core_ihec_objects_all.RData"
+#should we run the generator or load
+if (file.exists(load_file) & load_tables)
+{
+  ##save(all_samp_table, all_samp_info_table, dist_table, wind_table, file = paste0("core_",run_name,"_objects.RData"))
+  repeat_counts_table <- load(load_file)
+}
+rmsk_table <- read.csv(paste0(start_path,"/lib/rmsk_hg38.txt"),header = T, sep = '\t')
+```
+
+
+
+### Complete data
+
+reorganization of data and various manual data arrangements and fixes
+
+```{r data_complete}
+assay_keep <- c("H3K27ac","H3K36me3","H3K9me3","H3K27me3","H3K4me1","H3K4me3")
+assay_order <- c("H3K27ac","H3K4me1","H3K4me3","H3K36me3","H3K27me3","H3K9me3")
+
+consortium_drop <- c()#c("GIS","EpiHK")
+#completing data
+
+#print("discard missing epirr")
+#print(all_samp_table$epirr_id %notin% epiatlas_metadata$EpiRR)
+
+main_te_df <- ungroup(all_samp_table) %>% mutate(across(where(is.factor), as.character)) %>% filter(epirr_id %in% epiatlas_metadata$EpiRR) %>% filter(assay %in% assay_keep, batch %notin% consortium_drop) %>% mutate(count_prop=(count/read_count),
+                                                              true_donor = ihec_table[match(donor, ihec_table$id ),]$donor_id,
+                                                              true_donor = ifelse(is.na(true_donor), donor, true_donor), 
+                                                              batch = ifelse(batch=="NIH Roadmap Epigenomics","NIH Roadmap", batch), batch = ifelse(batch=="AMED-CREST","CREST", batch))
+
+main_te_df$sample_short <- factor(main_te_df$sample_short, levels = unique(main_te_df$sample_short[order(main_te_df$assay)] ))
+main_te_df <- main_te_df %>% mutate(across(where(is.factor), as.character)) %>% replace_na(list(batch = 'NA'))
+
+#Windows
+#missing wind_tables
+#print("Missing Windows")
+#print(setdiff(colnames(wind_table),unique(main_te_df$sample_name)))
+wind_unsparse_pre <-  select(wind_table, intersect(colnames(wind_table),unique(main_te_df$sample_name)))
+wind_unsparse <-  wind_unsparse_pre[ rowSums(wind_unsparse_pre)!=0, ]
+
+wind_var <- var(wind_unsparse)
+
+#TE Windows
+wind_table_TE <- readRDS(paste0(start_path,"/wind_te_table.rds"))
+wind_unsparse_TE <-  select(wind_table_TE, intersect(colnames(wind_table_TE),unique(main_te_df$sample_name)))
+wind_unsparse_TE_by_non <-  wind_unsparse_TE[ rowSums(wind_unsparse_pre)!=0, ]
+wind_unsparse_TE <-  wind_unsparse_TE[ rowSums(wind_unsparse_TE)!=0, ]
+
+#Distribution
+dist_table <- dist_table %>% distinct(short_name,  .keep_all = TRUE) %>% filter(assay %in% assay_keep, batch %notin% consortium_drop)
+row.names(dist_table)  <- dist_table$name
+#patch batch names
+dist_table <- dist_table %>% mutate(batch = as.character(batch)) %>% mutate(batch = ifelse(batch=="NIH Roadmap Epigenomics","NIH Roadmap", batch), batch = ifelse(batch=="AMED-CREST","CREST", batch))
+
+#Long Version
+dist_table.long <- melt(select(dist_table,-c(all)),id.vars = c("name","batch","assay") ,measure.vars = c(9,10,11,12,13,14), variable.name = "zone")
+dist_table.long$assay <- factor(dist_table.long$assay)
+dist_table.long$name <- factor(dist_table.long$name, levels = unique(dist_table.long$name[order(dist_table.long$assay)] ))
+dist_table.long <- arrange(dist_table.long, assay)
+
+#Mappings
+#repeat to family
+
+#repeat maker mappings
+rmsk_table_red <- select(mutate(rmsk_table,length = genoEnd-genoStart, age = milliDiv/1000/2.2e-9),milliDiv,"milliDel","milliIns","repName","repClass","repFamily","length","age")
+
+rmsk_name_map <- rmsk_table_red %>% group_by(repName, repClass, repFamily) %>% top_n(1) %>% select(name=repName, class=repClass, family=repFamily) %>% ungroup() %>% mutate(across(where(is.factor), as.character))
+repeat_to_family <- setNames(rmsk_name_map$family, as.character(rmsk_name_map$name))
+repeat_to_class <- setNames(rmsk_name_map$class, as.character(rmsk_name_map$name))
+family_to_class <- setNames(rmsk_name_map$class, as.character(rmsk_name_map$family))
+
+
+#repeat order
+repeat_order_by_fam <- select(rmsk_name_map,name,family)
+repeat_order_by_fam <- repeat_order_by_fam[order(repeat_order_by_fam$"family",repeat_order_by_fam$"name"),]
+rmsk_table_agg <- rmsk_table_red %>% group_by(repName) %>% summarise(count = n(),length_sd=sd(length), length=mean(length), rmsk_bases = sum(length), age_sd=sd(age),age=mean(age)) %>% ungroup()
+rmsk_table_agg$repName <- as.character(rmsk_table_agg$repName)
+rownames(rmsk_table_agg) <- rmsk_table_agg$repName
+#raw_table <- select(filter(all_samp_table, sample==all_samp_table[1,]$sample), name, rmsk_bases)
+rmsk_map <- setNames(rmsk_table_agg$rmsk_bases, as.character(rmsk_table_agg$repName))
+
+repeat_to_age <- rmsk_table_agg$age
+names(repeat_to_age) <- rmsk_table_agg$repName
+
+
+
+repeat_order_by_age <- mutate(select(rmsk_name_map,name,family), age = repeat_to_age[name])
+repeat_order_by_age <- repeat_order_by_age[order(repeat_order_by_age$"family",repeat_to_age[repeat_order_by_age$"name"],repeat_order_by_age$"name"),]
+
+#Enrichement metric
+
+major_families <- unique(get_show_family(main_te_df,3E-3)$tfamily)
+main_te_df <- get_show_family(main_te_df,3E-3)
+```
+
+
+```{r data_metrics}
+#Manual cell types edits
+
+message("data metric part 1")
+message(paste0("epiatlas metadata size: ", length(unique(epiatlas_metadata$EpiRR))))
+message(paste0("all_samp_info_table epirr size: ",length(unique(all_samp_info_table$epirr_id))))
+
+message(paste0("all_samp_info_table size: ",length(all_samp_info_table$epirr_id),"/",nrow(all_samp_info_table)))
+
+message(paste0("epirr_liste: ",list(
+epiatlas_metadata[unlist(lapply(as.character(all_samp_info_table$epirr_id),function(x){ return(grep(strsplit(x,"\\.")[[1]][1],epiatlas_metadata$EpiRR))})),]$EpiRR
+)))
+
+message(paste0("epirr_liste: ",length(
+epiatlas_metadata[unlist(lapply(as.character(all_samp_info_table$epirr_id),function(x){ return(grep(strsplit(x,"\\.")[[1]][1],epiatlas_metadata$EpiRR))})),]$EpiRR
+)))
+
+
+metrics_table <- filter(all_samp_info_table %>% mutate(across(where(is.factor), as.character)), assay %in% assay_keep, batch %notin% consortium_drop, epirr_id %in% epiatlas_metadata$EpiRR) %>% mutate(
+  epirr_id_true = epirr_id,
+  epirr_id = epiatlas_metadata[unlist(lapply(epirr_id_true,function(x){ return(grep(strsplit(x,"\\.")[[1]][1],epiatlas_metadata$EpiRR))})),]$EpiRR,
+                          qc_score = 0,
+                          frip_score = 0, 
+                          reads_score = 0, 
+                          verdict = 0,
+                                              
+  cell_type = epiatlas_metadata[match(epirr_id,epiatlas_metadata$EpiRR),]$harmonized_sample_ontology_intermediate, #as.character(cell_type_to_cat[cell_full,]),#cell_full,# #as.character(ihec_generate_cell_category(as.character(sample_short))),
+                          cell_type = ifelse(is.na(cell_type),"NA",cell_type),
+                          cell_full = ifelse(is.na(cell_full), cell_type, cell_full),
+                          cell_abv = as.character(ihec_generate_cell_abv(cell_full)),
+                          new_name = paste(donor, cell_abv, assay , sep = "_")
+                          )%>% replace_na(list(batch = 'NA'))
+
+metrics_table <-  mutate(metrics_table, sample_name = sample_short)
+
+message("data metric part 2")
+
+#Fix roadmap name
+metrics_table <-  mutate(metrics_table, batch = as.character(batch), batch = ifelse(batch=="NIH Roadmap Epigenomics","NIH Roadmap", batch), batch = ifelse(batch=="AMED-CREST","CREST", batch))
+
+
+a_samp_info <- main_te_df %>% group_by(sample) %>% top_n(1,name) %>% select(sample, sample_short, sample_name, assay, condition, donor, batch, read_count, read_bases, repeat_read_count) %>% ungroup()
+
+message("data metric part 3")
+
+a_samp_info <- metrics_table
+
+a_samp_info <- mutate(a_samp_info, qc_verdict = metrics_table[match(sample_short, metrics_table$sample_name),]$"verdict", cell_abv = metrics_table[match(sample_short, metrics_table$sample_name),]$"cell_abv",
+                        cell_type = metrics_table[match(sample_short, metrics_table$sample_name),]$"cell_type",
+                      cell_full = metrics_table[match(sample_short, metrics_table$sample_name),]$"cell_full")
+#rownames(a_samp_info) <- a_samp_info$sample_short
+#a_samp_info <- column_to_rownames(a_samp_info, var = "sample_short")
+
+message("data metric part 4")
+health_names <- c(Healthy = "green2", "Normal" = "green3", None = "green4", "Apparently healthy" = "darkgreen",  Healthy = "green2", "Normal" = "green3", None = "green4", "Healthy with polysubstance abuse" = "darkgreen", "-" = "gray10", "Unknown" = "gray40")
+#Extra sample variables
+a_samp_info <- mutate(a_samp_info,
+                      health = epiatlas_metadata[match(epirr_id,epiatlas_metadata$EpiRR),]$harmonized_donor_health_status,#ihec_table[match(donor, ihec_table$id),]$"donor_health_status",
+                      health = ifelse(is.na(health),"NA",health),
+                      ethnicity = ihec_table[match(donor, ihec_table$id),]$"donor_ethnicity",
+                      ethnicity = ifelse(is.na(ethnicity),"NA",ethnicity),
+                      biomaterial = ifelse(is.na(biomaterial),"NA",biomaterial),
+                      proxy_health = epiatlas_metadata[match(epirr_id,epiatlas_metadata$EpiRR),]$harmonized_sample_disease_high,#ifelse((health=="NA" & disease=="NA"),"NA",ifelse((health %notin% names(health_names) & disease %notin% names(health_names)), "Diseased","Healthy"))
+                      proxy_health = ifelse(is.na(proxy_health),"NA",proxy_health)
+                      )
+
+message("data metric part 5")
+
+main_te_df$sample_short <- factor(main_te_df$sample_short, levels = unique(main_te_df$sample_short[order(main_te_df$assay, xtfrm(main_te_df$batch), xtfrm(a_samp_info[main_te_df$sample,]$cell_type ))] ))
+rownames(a_samp_info) <- a_samp_info$sample_short
+
+# extract quality samples
+qc_pass_list <- pull(filter(metrics_table,verdict>0),sample_name)
+qc_true_pass_list <- pull(filter(metrics_table,verdict>=0),sample_name)
+qc_fail_list <- pull(filter(metrics_table,verdict<=0),sample_name)
+qc_true_fail_list <- pull(filter(metrics_table,verdict<0),sample_name)
+manual_rem <- c()
+#rm(all_samp_list)
+#rm(all_samp_table)
+```
+
+
+```{r}
+sample_count <- nrow(a_samp_info)
+
+```
+
+
+## Create Palettes
+
+generate color palettes
+
+```{r palette_gen}
+#Palette generation
+#generate_palette(variable,pal,)
+
+show_col2 <- function (colours, labels = TRUE, borders = NULL, cex_label = 1, 
+  ncol = NULL) 
+{
+  d <- data.frame(col=colours) %>% mutate(name = names(colours), i=0:(length(colours)-1))
+  print(d)
+  #ggplot(d, aes(x=i%%10,y=i%/%10,fill=colours, la))+geom_tiles()
+  ggplot(d, aes(x=1,y=name,fill=names(colours)))+scale_fill_manual(values = colours)+geom_tile()+coord_fixed()+theme(legend.position = "none")
+}
+
+
+
+# Classes
+colourCount = length(unique(main_te_df$class))
+mypal = cols25(colourCount)
+class_palette <- setNames(c(mypal,"gray45"), c(sortcaseless(unique(main_te_df$class)),"Other"))
+show_col2(class_palette)
+
+# Families
+colourCount = length(unique(main_te_df$family))+1
+getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+mypal <- getPalette(colourCount)
+family_palette <- setNames(mypal, c(sortcaseless(unique(main_te_df$family)),"Other"))
+show_col2(family_palette)
+
+family_palette_names <- setNames(paste0(family_to_class[names(family_palette)],":",names(family_palette)),names(family_palette))
+
+family_palette_names["Other"] <- "Other" 
+
+
+# Cells
+# Full cell names
+colourCount = length(unique(metrics_table$cell_full))
+getPalette = colorRampPalette(brewer.pal(min(8,colourCount), "Dark2"))
+mypal <- getPalette(colourCount)#mypal <- hue_pal()(colourCount)
+cell_full_palette <- setNames(mypal, sortcaseless(unique(metrics_table$cell_full)))#c(sort(unique(main_te_df$batch))))
+cell_full_palette <- unlist(cell_full_palette)
+show_col2(cell_full_palette)
+#Cell abrreviations
+cell_abv_palette <- cell_full_palette
+names(cell_abv_palette) <- lapply(names(cell_abv_palette), function(x) ihec_generate_cell_abv(x))
+cell_abv_palette <- cell_abv_palette[unique(names(cell_abv_palette))]
+show_col2(cell_abv_palette)
+
+
+# Disease
+predef_pal <- c(Healthy = "green2", "Normal" = "green3", None = "green4", "Apparently healthy" = "darkgreen", "NA" = "gray20")
+non_predef <- setdiff(unique(a_samp_info$disease),names(predef_pal))
+colourCount = length(non_predef)
+getPalette = colorRampPalette(brewer.pal(12, "Set3"))
+mypal <- getPalette(colourCount)
+disease_palette <- setNames(mypal, c(sortcaseless(non_predef)))
+disease_palette <- unlist(list(predef_pal, disease_palette))
+#show_col(disease_palette)
+
+# Health
+predef_pal <- c("Healthy" = "gray90", "Normal" = "green3", "None" = "green4", "Healthy with polysubstance abuse" = "darkgreen","Diseased" = "red4","Disease" = "red3", "-" = "gray10", "NA" = "gray20", "Unknown" = "gray40", "Healthy/None" = "chartreuse4", "Cancer" = "brown4")#c(Healthy = "green2", "Normal" = "green3", None = "green4", "Healthy with polysubstance abuse" = "darkgreen","Diseased" = "red4", "-" = "gray10", "NA" = "gray20", "Unknown" = "gray40")
+non_predef <- setdiff(unique(a_samp_info$health),names(predef_pal))
+colourCount = length(non_predef)
+getPalette = colorRampPalette(brewer.pal(9, "Set2"))
+mypal <- getPalette(colourCount)
+health_palette <- setNames(mypal, c(sortcaseless(non_predef)))
+health_palette <- unlist(list(predef_pal, health_palette))
+#show_col(health_palette)
+
+# Biomaterial
+predef_pal <- c()
+non_predef <- setdiff(unique(a_samp_info$biomaterial),names(predef_pal))
+colourCount = length(non_predef)
+getPalette = colorRampPalette(brewer.pal(min(9,colourCount), "Set2"))
+mypal <- getPalette(colourCount)
+bio_palette <- setNames(mypal, c(sortcaseless(non_predef)))
+bio_palette <- unlist(list(predef_pal, bio_palette))
+
+# Proxy health
+predef_pal <- c("Healthy" = "gray90", "Normal" = "green3", "None" = "green4", "Healthy with polysubstance abuse" = "darkgreen","Diseased" = "red4","Disease" = "red3", "-" = "gray10", "NA" = "gray20", "Unknown" = "gray40", "Healthy/None" = "chartreuse4", "Cancer" = "brown4")
+non_predef <- setdiff(unique(a_samp_info$proxy_health),names(predef_pal))
+colourCount = length(non_predef)
+getPalette = colorRampPalette(brewer.pal(min(9,colourCount), "Set2"))
+mypal <- getPalette(colourCount)
+phealth_palette <- setNames(mypal, c(sortcaseless(non_predef)))
+phealth_palette <- unlist(list(predef_pal, phealth_palette))
+show_col2(phealth_palette)
+
+```
+
+## Load Palettes
+
+Load and generate palettes from EpiATLAs colors
+
+```{r}
+tmpjson <- read_json(paste0(start_path,"/data/IHEC_EpiATLAS_IA_colors_Apr_2024_Final.json"), auto_unbox = T)
+tmpjson
+
+# Assays#
+#histone
+vindx <- 1
+assay_palette <- lapply(tmpjson[[vindx]]$experiment,FUN = function(x){c(x)}) %>% unlist() %>% lapply(FUN = function(x){c(strsplit(x,","))}) %>% 
+  lapply(FUN = function(x){rgb(as.numeric(x[[1]][1]), as.numeric(x[[1]][2]), as.numeric(x[[1]][3]), maxColorValue = 255)}) %>% unlist()
+
+show_col2(assay_palette)
+
+# Cell types
+# temporary not used
+vindx <- 6
+ cell_palette <- lapply(tmpjson[[vindx]]$harmonized_sample_ontology_intermediate,FUN = function(x){c(x)}) %>% unlist() %>% lapply(FUN = function(x){c(strsplit(x,","))}) %>%
+  lapply(FUN = function(x){rgb(as.numeric(x[[1]][1]), as.numeric(x[[1]][2]), as.numeric(x[[1]][3]), maxColorValue = 255)}) %>% unlist()
+
+show_col2(cell_palette)
+
+# health
+# harmonized_sample_disease_high
+
+vindx <- 5
+ phealth_palette <- lapply(tmpjson[[vindx]]$harmonized_sample_disease_high,FUN = function(x){c(x)}) %>% unlist() %>% lapply(FUN = function(x){c(strsplit(x,","))}) %>%
+   lapply(FUN = function(x){rgb(as.numeric(x[[1]][1]), as.numeric(x[[1]][2]), as.numeric(x[[1]][3]), maxColorValue = 255)}) %>% unlist()
+ show_col2(phealth_palette)
+
+# consortium
+# fig1_project
+vindx <- 9
+batch_palette <- lapply(tmpjson[[vindx]]$fig1_project,FUN = function(x){c(x)}) %>% unlist() %>% lapply(FUN = function(x){c(strsplit(x,","))}) %>% 
+  lapply(FUN = function(x){rgb(as.numeric(x[[1]][1]), as.numeric(x[[1]][2]), as.numeric(x[[1]][3]), maxColorValue = 255)}) %>% unlist()
+
+batch_palette <- c(batch_palette, "NIH Roadmap" = "#9467bd")
+show_col2(batch_palette)
+
+tmpjson
+# consortium
+# fig1_project
+vindx <- 4
+bio_palette <- lapply(tmpjson[[vindx]]$harmonized_biomaterial_type,FUN = function(x){c(x)}) %>% unlist() %>% lapply(FUN = function(x){c(strsplit(x,","))}) %>% 
+  lapply(FUN = function(x){rgb(as.numeric(x[[1]][1]), as.numeric(x[[1]][2]), as.numeric(x[[1]][3]), maxColorValue = 255)}) %>% unlist()
+show_col2(bio_palette)
+```
+
+
+# Data overview
+
+```{r, results="asis"}
+print_DT(a_samp_info)
+```
+
+
+
+# Figure 1: Data
+
+Mostly plots on the data, its filtering 
+
+## Data Plots
+
+```{r fig1_cell_data, message=FALSE, warning=FALSE,  fig.height=6}
+tmp_layout <- list(#geom_bar( width = 1),
+                      #theme_bw(base_size =7),
+                      theme(axis.text.y = element_blank() ,
+                            axis.text.x = element_text(angle = 90, vjust=0.5,hjust = 1),
+                            panel.spacing.x = unit(0.1, "lines"),
+                            panel.border = element_rect(color = alpha("black",0.9), fill = NA),
+                            axis.line = element_line( colour = "gray"),
+                            panel.grid.major.x = element_blank(),
+                            panel.grid.minor.x = element_blank(),
+                            legend.position = "bottom")
+                   )
+
+
+ct_df <- count(metrics_table, cell_type) %>% mutate(prop=n/sum(n))#, batch
+f1_a <- ggplot(ct_df, aes(cell_type, prop,  label = n, fill = cell_type))+
+  labs(x = "Cell type", y = "proportion")+
+  scale_fill_manual(name="Family", values = cell_palette)+
+  scale_y_continuous( labels = scales::percent)+
+  geom_col()+
+  theme(legend.position = "none") + theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+  geom_text(aes(y = pmax(prop/2,max(prop)*0.02)), color = "white")+
+  coord_flip()
+f1_a
+
+f1bar_a <- ggplot(ct_df, aes(reorder(cell_type,n), n,  label = n, fill = cell_type))+
+  labs(x = "Cell type", y = "Sample Count", title = paste0(nrow(a_samp_info)," samples"))+
+  scale_fill_manual(name="Family", values = cell_palette)+
+  #scale_y_continuous( labels = scales::percent)+
+  geom_col()+theme_classic2()+
+  scale_y_continuous(expand = expansion(mult = c(0.01, .1)))+
+  theme(legend.position = "none",plot.title = element_text(hjust = 0.5)) + 
+  geom_text(aes(y = pmax(n)),hjust=0, nudge_y = 0.25, color = "black")+
+  coord_flip()
+f1bar_a
+
+
+ct_df
+
+
+
+ct_df$cell_type <- reorder(ct_df$cell_type,ct_df$n)
+ct_df <- mutate(ct_df, cell_type_mod = paste0(cell_type," (",n,")"))
+ct_df$cell_type_mod <- reorder(ct_df$cell_type_mod,ct_df$n)
+
+ct_df_save <- ct_df
+
+f1_a_4 <- ggplot(ct_df_save,aes(x=2,y=n,  label = n, fill = cell_type)) + 
+  geom_col()+
+  scale_fill_manual(name="Cell Categories" ,values = cell_palette, limits = rev(sort(ct_df_save$cell_type)),  labels = function(x){return(paste0(x," (",ct_df_save[match(x, ct_df_save$cell_type),]$n,")"))})+
+  xlim(c(0, 3)) + 
+  ggplot2::annotate("text", x = 0, y = 0,  label = paste0(nrow(a_samp_info),"\nSamples"),size = 8, color = "black")+theme(aspect.ratio=2) +coord_polar(theta="y")+ theme_void()
+f1_a_4
+
+```
+
+
+```{r fig1_data_distribution_bars, message=FALSE, warning=FALSE, fig.height=2}
+
+tempd <- metrics_table %>% group_by(assay) %>% summarise(tn = n())
+
+
+f1bar_b1 <- ggplot(tempd, aes(x=reorder(assay,tn), y=tn, fill= assay, label = paste0(tn)))+
+  labs( y = "Sample count")+
+  scale_fill_manual(name="Family", values = assay_palette)+
+  #scale_y_continuous(labels = scales::percent)+
+  geom_col()+theme_classic2(base_size = 15)+
+  scale_y_continuous(expand = expansion(mult = c(0.01, .1)))+
+    geom_text(aes(y = tn),hjust=0, nudge_y = 0.25, color = "black")+
+  theme(axis.title.y = element_blank(), legend.position = "none",legend.key.size = unit(0.2,"cm"))+coord_flip()#+coord_polar("y")
+f1bar_b1
+
+tempd <- metrics_table %>% group_by(batch) %>% summarise(tn = n())
+
+f1bar_b2 <- ggplot(tempd, aes(x=reorder(batch,tn), y=tn, fill= batch, label = paste0(tn)))+
+  labs( y = "Sample count")+
+  scale_fill_manual(name="Family", values = batch_palette)+
+  #scale_y_continuous(labels = scales::percent)+
+  geom_col()+theme_classic2(base_size = 15)+
+  scale_y_continuous(expand = expansion(mult = c(0.01, .1)))+
+    geom_text(aes(y = tn),hjust=0, nudge_y = 0.25, color = "black")+
+  theme(axis.title.y = element_blank(), legend.position = "none",legend.key.size = unit(0.2,"cm"))+coord_flip()
+f1bar_b2
+
+tempd <- a_samp_info %>% group_by(proxy_health) %>% summarise(tn = n())
+
+f1bar_b4_health <- ggplot(tempd, aes(x=reorder(proxy_health,tn), y=tn, fill= proxy_health, label = paste0(tn)))+
+  labs( y = "Sample count")+
+  scale_fill_manual(name="Family", values = phealth_palette)+
+  #scale_y_continuous(labels = scales::percent)+
+  geom_col()+theme_classic2(base_size = 15)+
+  scale_y_continuous(expand = expansion(mult = c(0.01, .1)))+
+    geom_text(aes(y = tn),hjust=0, nudge_y = 0.25, color = "black")+
+  theme(axis.title.y = element_blank(), legend.position = "none",legend.key.size = unit(0.2,"cm"))+coord_flip()
+f1bar_b4_health
+```
+
+
+```{r data_outlier_distribution, include=FALSE}
+# Make the outliers, dont print plot
+# Outliers in 2 or more regions are to be discarded
+dist_outliers <- c()
+
+boxout <- (boxplot(value~(zone*(batch*assay)), data = subset(dist_table.long, zone!="all"), plot=F))
+outliers <- dist_table.long[which(dist_table.long$value %in% boxout$out),]
+
+summarise(group_by(outliers,name),n=n())
+
+
+dist_outliers <- unique(as.character(filter(summarise(group_by(outliers,name),n=n()),n>=2)$name))
+```
+
+
+
+```{r, results="asis"}
+
+cat("\n\n")
+cat("The Outlier Tables \n\n")
+
+summarise(group_by(outliers,name, batch, assay),n=n())
+
+print_DT(summarise(group_by(outliers,name, batch, assay),n=n()) %>% filter(n>=2))
+
+outliers_summary <- data.frame()
+
+if (nrow(outliers)>0){
+outliers_summary <- dcast(outliers, name~zone) %>% mutate(across(all_of(unique(outliers$zone)), function(a){as.integer(!is.na(a))})) %>% mutate(n= rowSums(.[2:7])) %>% filter(n>=2)
+}
+
+print_DT(outliers_summary)
+
+
+write_csv(outliers_summary, "PSTable_discarded_samples.csv", col_names = T)#"sample_outliers.csv"
+cat("\n\n")
+cat("Epirr id count\n\n")
+
+
+
+```
+
+## Outliers
+
+```{r data_outliers_merge, results="asis"}
+
+count_outliers <- c()#No longer use count outliers
+print(paste0("Sample count: ", sample_count))
+#dist_outliers
+#count_outliers
+dist_outliers <- unlist(list(dist_outliers, count_outliers))
+print(paste0("Outlier count: ", length(dist_outliers)))
+data.frame(dist_outliers)
+print(paste0("lost prop: ",length(dist_outliers)/sample_count))
+```
+
+## UMAP
+
+Umap using most variance between assays (10,000) regions
+
+```{r, results="asis"}
+# only keep windows with variance above the arbitrary threshold. (manually determined from histogram)
+
+wind_variance_assay <- wind_unsparse  %>% t() %>% as.data.frame() %>% cbind(assay = a_samp_info[colnames(wind_unsparse),]$assay) %>% group_split(assay)
+
+wind_variance_assay_list = list()
+for (indx in 1:length(wind_variance_assay)) {
+  wind_variance_assay_list[[indx]] <- wind_variance_assay[[indx]] %>% select(-c("assay")) %>% colMeans()
+}
+wind_variance_assay_1 <- bind_cols(wind_variance_assay_list)
+wind_variance2 <- apply(wind_variance_assay_1, 1, var)
+
+varmin <- maxN(wind_variance2, 21000)
+varmax <- maxN(wind_variance2, 1000)
+wind_highvar2 <- wind_unsparse[wind_variance2>maxN(wind_variance2, 21000) & wind_variance2<maxN(wind_variance2, 1000),]
+
+print(paste0("Variance selected:",varmin," to ",varmax))
+
+```
+
+## New UMAP set
+
+```{r data_umap2_setup, fig.width=8, fig.height=6}
+# Now for windows with high variance
+umap_windows <- data.frame(t(wind_highvar2))
+umap_windows <- umap_windows[rownames(umap_windows) %notin% dist_outliers, ]#filter(umap_windows, rownames(umap_windows) %notin% dist_outliers)
+#UMAP
+mod.config <- umap.defaults
+mod.config$n_epochs <- 400
+
+if(nrow(umap_windows)<mod.config$n_neighbors){
+  mod.config$n_neighbors <- nrow(umap_windows)-1
+}
+
+
+umap_out <- umap(umap_windows, config = mod.config, random_state=123)
+
+# Create a subset of information table for only the samples used
+a_samp_info_less <- a_samp_info[unlist(match(rownames(umap_windows),a_samp_info$sample_short)), ]
+umap.km <- kmeans(umap_out$layout, min(6,nrow(umap_windows)-1), nstart = 25)
+
+# Build a plotting dataframe merging umap layout with associated sample info
+umap_plot <- data.frame(x = umap_out$layout[,1], y = umap_out$layout[,2],
+                        assay = factor(a_samp_info_less$assay),
+                        cell = factor(a_samp_info_less$condition),
+                        donor = a_samp_info_less$donor,
+                        batch = a_samp_info_less$batch,
+                        cell_type = unlist(a_samp_info_less$cell_type), 
+                        cell_true_type = unlist(a_samp_info_less$cell_abv),
+                        disease = unlist(a_samp_info_less$disease),
+                        health = unlist(a_samp_info_less$health),
+                        biomaterial = unlist(a_samp_info_less$biomaterial),
+                        qc = "1",#as.character(a_samp_info_less$qc_verdict),
+                        qc2 = factor(ifelse(rownames(umap_windows) %notin% dist_outliers,1,0.8)),
+                        #qc2 = factor(1),
+                        proxy_health = unlist(a_samp_info_less$proxy_health),
+                        read_count = a_samp_info_less$read_count,
+                        cluster = factor(umap.km$cluster[rownames(umap_windows)]),
+                        name = rownames(umap_windows))
+
+
+
+
+
+```
+
+```{r fig1_umap2_assay, fig.width=8, fig.height=7}
+
+#batch_shapes = 
+#setNames(1:length(unique(umap_plot$batch)), sort(unique(umap_plot$batch)))
+#setNames(c(16, 15, 17, 18, 3, 8, 9, NA), sort(unique(umap_plot$batch)))
+umap2_assay <- ggplot(umap_plot,aes(x=x,y=y,col=assay))+#,shape = batch
+  #scale_shape_manual(values = setNames(c(16, 15, 17, 18, 3, 8, 1, NA), sort(unique(umap_plot$batch))))+
+  scale_color_manual(values = assay_palette)+
+  geom_point()+#size=2
+  guides(alpha = "none") +
+  theme_classic2() +
+  ggtitle("UMAP - Assay")
+f1_2_c <- umap2_assay
+f1_2_c
+
+ggplot(umap_plot,aes(x=x,y=y,col=assay,shape = cluster))+
+  scale_shape_manual(values = setNames(c(16, 15, 17, 18, 3, 8, 1, NA), sort(unique(umap_plot$batch))))+
+  scale_color_manual(values = assay_palette)+
+  geom_point()+
+  guides(alpha = "none") +
+  theme_classic2() +
+  ggtitle("UMAP - Assay")
+```
+
+
+
+```{r data_umap27ac_setup, fig.width=8, fig.height=6}
+# Now for windows with high variance
+samp27ac <- a_samp_info[which(a_samp_info$assay=="H3K27ac"),]$sample_short
+umap_windows27ac <- umap_windows[rownames(umap_windows) %in% samp27ac, ]#filter(umap_windows, rownames(umap_windows) %notin% dist_outliers)
+#UMAP
+mod.config <- umap.defaults
+mod.config$n_epochs <- 400
+
+mod.config$n_neighbors <- min(mod.config$n_neighbors, max(nrow(umap_windows27ac)-1,2))
+
+umap_out27ac <- umap(umap_windows27ac, config = mod.config, random_state=123)
+
+# Create a subset of information table for only the samples used
+a_samp_info_less27ac <- a_samp_info[unlist(match(rownames(umap_windows27ac),a_samp_info$sample_short)), ]
+umap.km <- kmeans(umap_out27ac$layout, min(6,max(nrow(a_samp_info_less27ac)-1,1)), nstart = 25)
+
+# Build a plotting dataframe merging umap layout with associated sample info
+umap_plot27ac <- data.frame(x = umap_out27ac$layout[,1], y = umap_out27ac$layout[,2],
+                        assay = factor(a_samp_info_less27ac$assay),
+                        cell = factor(a_samp_info_less27ac$condition),
+                        donor = a_samp_info_less27ac$donor,
+                        batch = a_samp_info_less27ac$batch,
+                        cell_type = unlist(a_samp_info_less27ac$cell_type), 
+                        cell_true_type = unlist(a_samp_info_less27ac$cell_abv),
+                        disease = unlist(a_samp_info_less27ac$disease),
+                        health = unlist(a_samp_info_less27ac$health),
+                        biomaterial = unlist(a_samp_info_less27ac$biomaterial),
+                        qc = "1",#as.character(a_samp_info_less$qc_verdict),
+                        qc2 = factor(ifelse(rownames(umap_windows27ac) %notin% dist_outliers,1,0.8)),
+                        #qc2 = factor(1),
+                        proxy_health = unlist(a_samp_info_less27ac$proxy_health),
+                        read_count = a_samp_info_less27ac$read_count,
+                        cluster = factor(umap.km$cluster[rownames(umap_windows27ac)]),
+                        name = rownames(umap_windows27ac))
+
+
+
+
+
+```
+
+```{r , results="asis"}
+cat("\n\n")
+cat(paste0("n_neighbors: ", mod.config$n_neighbors))
+cat("\n\n")
+```
+
+
+
+```{r fig1_umap27ac_assay, fig.width=8, fig.height=7}
+
+#batch_shapes = 
+#setNames(1:length(unique(umap_plot$batch)), sort(unique(umap_plot$batch)))
+#setNames(c(16, 15, 17, 18, 3, 8, 9, NA), sort(unique(umap_plot$batch)))
+f1_27ac_c2 <- ggplot(umap_plot27ac,aes(x=x,y=y,col=batch))+#,shape = batch
+  #scale_shape_manual(values = setNames(c(16, 15, 17, 18, 3, 8, 1, NA), sort(unique(umap_plot$batch))))+
+  scale_color_manual(values = batch_palette)+
+  geom_point()+#size=2
+  guides(alpha = "none") +
+  theme_classic2() + theme(legend.position = "none")+
+  ggtitle("UMAP - H3K27ac - Consortium")
+f1_27ac_c2
+
+
+f1_27ac_c4 <- ggplot(umap_plot27ac,aes(x=x,y=y,col=assay))+#,shape = batch
+  #scale_shape_manual(values = setNames(c(16, 15, 17, 18, 3, 8, 1, NA), sort(unique(umap_plot$batch))))+
+  scale_color_manual(values = assay_palette)+
+  geom_point()+#size=2
+  guides(alpha = "none") +
+  theme_classic2() + theme(legend.position = "none")+
+  ggtitle("UMAP - H3K27ac - assay")
+f1_27ac_c4
+
+
+f1_27ac_c <- ggplot(umap_plot27ac,aes(x=x,y=y,col=cell_type))+#,shape = batch
+  #scale_shape_manual(values = setNames(c(16, 15, 17, 18, 3, 8, 1, NA), sort(unique(umap_plot$batch))))+
+  scale_color_manual(values = cell_palette)+
+  geom_point()+#size=2
+  guides(alpha = "none") +
+  theme_classic2() + theme(legend.position = "none")+
+  ggtitle("UMAP - H3K27ac - Cell Types")
+f1_27ac_c
+
+
+f1_27ac_c3 <- ggplot(umap_plot27ac,aes(x=x,y=y,col=biomaterial))+#,shape = batch
+  #scale_shape_manual(values = setNames(c(16, 15, 17, 18, 3, 8, 1, NA), sort(unique(umap_plot$batch))))+
+  scale_color_manual(values = bio_palette)+
+  geom_point()+#size=2
+  guides(alpha = "none") +
+  theme_classic2() + theme(legend.position = "none")+
+  ggtitle("UMAP - H3K27ac - Biomaterial")
+f1_27ac_c3
+```
+
+## Composed Figure 1
+
+```{r fig.width=15, fig.height=15}
+
+layout <- "
+AAAABBBB
+CCCCBBBB
+DDDDBBBB
+EEEEFFFF
+EEEEFFFF
+"
+
+final_fig_1 <- (((f1bar_b2)+plot_layout(guides = "keep")) +  (f1bar_a)+ (f1bar_b1)+(f1bar_b4_health) +  f1_2_c*theme(legend.position = "bottom",legend.key.size = unit(0.2,"cm")) +f1_27ac_c*theme(legend.position = "none",legend.key.size = unit(0.2,"cm")) +plot_layout(design = layout)) + plot_annotation(tag_levels = 'A') 
+
+final_fig_1 & theme(plot.tag = element_text(size = 14))
+
+#ggsave("fig_images/fig1_data_1.svg",final_fig_1)
+#ggsave("fig_images/fig1_data_1.pdf",final_fig_1)
+```
+
+
+# Figure 2: TEs
+
+
+## Data prep
+
+Set up plot structure
+
+```{r te_plot_structure}
+#theme_min_large <- theme_set(theme_minimal(base_size = 9))#16
+#theme_set(theme_min_large)
+#base structure
+plot_layout <- list (geom_bar( width = 1),
+                      theme_classic2(base_size =16),
+                      theme(axis.text.x = element_blank() , 
+                            panel.grid.major.x = element_blank(),
+                            panel.grid.minor.x = element_blank(),
+                            strip.background = element_blank(),
+                            axis.line.x.bottom = element_blank(),
+                            axis.ticks.x = element_blank()),
+                      #scale_fill_manual(values = family_palette),
+                      scale_y_continuous(limits = c(NA,1),labels = scales::percent)#+
+)
+plot_prop_layout <- list(geom_bar( position = "fill",stat = "identity", width = 1),
+                      theme_classic2(base_size = 16),
+                      theme(axis.text.x = element_blank() , 
+                            panel.grid.major.x = element_blank(),
+                            panel.grid.minor.x = element_blank(),
+                            strip.background = element_blank(),
+                            axis.line.x.bottom = element_blank(),
+                            axis.ticks.x = element_blank()),
+                      scale_y_continuous(limits = c(NA,1),labels = scales::percent)
+)
+plot_fold_layout <- list(geom_bar( width = 1),
+                      theme_classic2(base_size = 16),
+                      theme(axis.text.x = element_blank(), 
+                            panel.grid.major.x = element_blank(),
+                            panel.grid.minor.x = element_blank(),
+                            strip.background = element_blank())
+)
+
+# Cell type labelling
+plot_label_cell <- list(
+    new_scale_fill(),
+  geom_tile(aes(sample_short,y = -0.04,fill = cell_type),width = 1, height=0.04, linetype=0,show.legend=FALSE),
+  scale_fill_manual(name = "Cell Type",values = cell_palette),
+  theme(legend.position = "none")
+)
+# Batch labelling
+plot_label_batch <- list(
+    new_scale_fill(),
+  geom_tile(aes(sample_short,y = -0.08,fill = batch),width = 1, height=0.04, linetype=0, show.legend=FALSE),
+  scale_fill_manual(values = batch_palette),
+  theme(legend.position = "none")
+)
+
+# health labelling
+plot_label_health <- list(
+    new_scale_fill(),
+  geom_tile(aes(sample_short,y = -0.08,fill = proxy_health),width = 1, height=0.04, linetype=0, show.legend=FALSE),
+  scale_fill_manual(values = phealth_palette),
+  theme(legend.position = "none")
+)
+```
+
+Clean up data, Label TE families and group into Other smaller, less relevant families
+
+```{r te_clean_data, results="asis"}
+#Clean up data & add cell type information
+clean_te_df <- filter(main_te_df,sample_short %notin% dist_outliers)
+clean_te_df <- get_show_family(clean_te_df, 0.01)#3E-3
+clean_te_df$tclass <- get_show_class(clean_te_df,0.001)
+clean_te_df <- mutate(clean_te_df, cell_type = metrics_table[match(sample_name,metrics_table$sample_name),]$cell_type, 
+                                  cell_full = metrics_table[match(sample_name,metrics_table$sample_name),]$cell_full)
+clean_te_df <- mutate(clean_te_df, instances_rmsk = rmsk_table_agg[name,]$count, instance_prop = count/instances_rmsk, instance_prop_cap = pmin(instance_prop,1)) %>% mutate(assay = factor(assay,levels = assay_order))
+#Final family clean up
+clean_te_df <- clean_te_df %>%  mutate(tfamily = ifelse( !(tfamily %in% c("Simple_repeat", "Low_complexity", "Satellite"))&  !(grepl("?", tfamily, fixed = TRUE)), tfamily,"Other"))
+
+#unique(get_show_family(clean_te_df, 0.01)$tfamily)
+#unique(clean_te_df$tfamily2)
+#Significantly enriched TEs only
+clean_signif_te_df <- filter(clean_te_df,valid==1)
+#converter
+fam_to_tfam <- clean_te_df  %>% group_by(family, tfamily) %>% summarise( n = n()) %>% select(family, tfamily)
+fam_to_tfam <- setNames(as.character(fam_to_tfam$tfamily), fam_to_tfam$family)
+
+mappability_table <- mutate(mappability_table, family = repeat_to_family[name],class = repeat_to_class[name], tfamily = fam_to_tfam[family], age=repeat_to_age[name])
+
+print(paste0("Surviving samples: ", length(unique(clean_te_df$sample))))
+
+mappability_mean_table <- mappability_table %>% group_by(family) %>% summarise(mean_mappability = mean(prop))
+
+write.csv(mappability_mean_table,"PSTable2_mappability.csv", row.names = T, col.names = T)
+
+```
+
+
+## TE Class  plots
+
+Not used or shown
+
+```{r fig2_class_barplots,warning = FALSE, fig.width=9, fig.height=3}
+#fig.width=9, fig.height=3
+#, fig.width=8, fig.height=2
+baked_barplot_table = clean_te_df %>% group_by(sample_short, assay, batch, cell_type, cell_full, tclass) %>% summarise(n = n(), count = sum(count_obs_exp_percent), avg = mean(count_obs_exp_percent), log10s = pmax(log10(count*1000),0), count_prop_sum = sum(count_prop), rand_prop = sum(rand_count/rand_read_count))
+
+baked_barplot_valid_table = clean_signif_te_df %>% group_by(sample_short, assay, batch, cell_type, cell_full, tclass) %>% summarise(n = n(), count = sum(count_obs_exp_percent), avg = mean(count_obs_exp_percent), log10s = pmax(log10(count*1000),0), count_prop_sum = sum(count_prop), rand_prop = sum(rand_count/rand_read_count), count_obs_exp_percent_sum = sum(count_obs_exp_percent))
+
+baked_barplot_table$sample_short <- reorder(baked_barplot_table$sample_short, order(order(xtfrm(baked_barplot_table$batch), xtfrm(baked_barplot_table$cell_type), xtfrm(baked_barplot_table$cell_full))))
+
+baked_barplot_valid_table$sample_short <- reorder(baked_barplot_valid_table$sample_short, order(order(xtfrm(baked_barplot_valid_table$batch), xtfrm(baked_barplot_valid_table$cell_type), xtfrm(baked_barplot_valid_table$cell_full))))
+
+# Expected plot (no)
+f2_a_0 <- ggplot(baked_barplot_table,aes(sample_short, weight=rand_prop, fill = tclass))+
+  labs(title = "Expected (random) TE content", x = "Samples", y = "Count proportion of peaks(%)")+
+  scale_fill_manual(values = class_palette)+
+  plot_layout + plot_label_cell + plot_label_batch +
+  facet_grid(~(assay), space="free_x", scales="free_x", switch="x")
+f2_a_0
+# Observed plot (yes)
+f2_a <- ggplot(baked_barplot_table,aes(sample_short, weight=count_prop_sum, fill = tclass))+
+  labs(title = "Observed TE Class content of samples", x = "Samples", y = "Count proportion of peaks(%)")+
+  scale_fill_manual(name = "TE Class" ,values = class_palette)+
+  plot_layout+guides(fill=guide_legend(nrow=2)) + plot_label_cell + plot_label_batch +
+  facet_grid(~(assay), space="free_x", scales="free_x", switch="x")+theme(legend.position = "bottom",legend.key.size = unit(0.25,"lines"))
+f2_a
+
+# Observed - Expected (no)
+f2_a_2 <- ggplot(baked_barplot_valid_table,aes(sample_short, weight=count_obs_exp_percent_sum, fill = tclass))+
+  labs(title = "Observed - Expected TE content", x = "Samples", y = "Count proportion of peaks(%)")+
+  scale_fill_manual(values = class_palette)+
+  plot_layout + plot_label_cell + plot_label_batch + theme(strip.background = element_blank())+
+  facet_grid(~(assay), space="free_x", scales="free_x", switch="x")
+f2_a_2
+
+```
+
+```{r fig2_class_merge, fig.width=9,}
+
+f2_a0 <- (f2_a_0/f2_a/f2_a_2)
+f2_a0
+
+f2_aa <- (f2_a/(f2_a_2+theme(strip.background = element_blank(), axis.line.x.bottom = element_blank(), axis.ticks.x = element_blank())+coord_cartesian(ylim = c(-0.07,0.70))))
+f2_aa
+```
+
+
+## TE family Plots
+
+
+
+```{r fig2_barplots_fam_alt_h,warning = FALSE, fig.width=9, fig.height=3}
+#, fig.width=9, fig.height=3
+#Expected plot (fig.width=12, fig.height=4)
+
+baked_barplot_table = clean_te_df %>% group_by(sample_short, assay, batch, cell_type, tfamily) %>% summarise(n = n(), count = sum(count_obs_exp_percent), avg = mean(count_obs_exp_percent), log10s = pmax(log10(count*1000),0), count_prop_sum = sum(count_prop), rand_prop = sum(rand_count/rand_read_count)) %>% mutate(proxy_health = a_samp_info[as.character(sample_short), ]$proxy_health ,assay = factor(assay, levels = c("H3K27ac","H3K4me1","H3K4me3","H3K36me3","H3K27me3","H3K9me3")))#
+
+baked_barplot_valid_table = clean_signif_te_df %>% group_by(sample_short, assay, batch, cell_type, tfamily)  %>% summarise(n = n(), count = sum(count_obs_exp_percent), avg = mean(count_obs_exp_percent), log10s = pmax(log10(count*1000),0), count_prop_sum = sum(count_prop), rand_prop = sum(rand_count/rand_read_count), count_obs_exp_percent_sum = sum(count_obs_exp_percent)) %>% mutate(proxy_health = a_samp_info[as.character(sample_short),]$proxy_health, assay = factor(assay, levels = c("H3K27ac","H3K4me1","H3K4me3","H3K36me3","H3K27me3","H3K9me3")))
+
+baked_barplot_table$sample_short <- reorder(baked_barplot_table$sample_short, order(order(xtfrm(baked_barplot_table$cell_type), xtfrm(baked_barplot_table$proxy_health))))
+
+baked_barplot_valid_table$sample_short <- reorder(baked_barplot_valid_table$sample_short, order(order( xtfrm(baked_barplot_valid_table$cell_type),xtfrm(baked_barplot_valid_table$proxy_health))))
+
+# Observed plot (yes)
+f2alt_b1 <- ggplot(baked_barplot_table,aes(sample_short, weight=count_prop_sum, fill = tfamily))+
+  labs(title = "Observed TE Family Overlap of samples", x = "Samples", y = "TE's peak overlap(%)")+
+  scale_fill_manual(values = family_palette)+
+  plot_layout + plot_label_cell + #plot_label_health +
+  facet_grid(~(assay), space="free_x", scales="free_x", switch="x")+theme(axis.text.x = element_blank(),  axis.title.x = element_blank())#strip.text = element_blank(),
+f2alt_b1
+
+# Expected plot (yes)
+f2alt_b2 <- ggplot(baked_barplot_table,aes(sample_short, weight=rand_prop, fill = tfamily))+
+  labs(title = "Expected (random) TE Overlap", x = "Samples", y = "TE's peak overlap(%)")+
+  scale_fill_manual(values = family_palette)+
+  plot_layout + plot_label_cell + #plot_label_health +
+  facet_grid(~(assay), space="free_x", scales="free_x", switch="x")+theme(axis.text.x = element_blank(), strip.text = element_blank(), axis.title.x = element_blank())
+f2alt_b2
+
+# Observed - Expected (yes)
+f2alt_b3 <- ggplot(baked_barplot_valid_table,aes(sample_short, weight=count_obs_exp_percent_sum, fill = tfamily))+
+  labs(title = "Observed - Expected TE Family Overlap (Enrichment)", x = "Samples", y = "TE's peak overlap(%)")+
+  scale_fill_manual(name = "TE family",values = family_palette, limits = force)+#
+  plot_layout + plot_label_cell + #plot_label_health +
+  facet_grid(~(assay), space="free_x", scales="free_x", switch="x")+theme(legend.position = "right",legend.key.size = unit(0.5,"lines"), legend.text=element_text(size=rel(0.8)))+guides(fill=guide_legend(ncol=1))#
+f2alt_b3
+
+
+##le_plot
+leg <- get_legend(f2alt_b3)
+as_ggplot(leg)
+
+ggsave("fig_images/TE_legend.svg",as_ggplot(leg))
+ggsave("fig_images/TE_legend.pdf",as_ggplot(leg))
+
+#as_ggplot(get_legend(ggplot(notTagValid,aes(sample_short,weight=count_prop,fill = batch))+geom_bar()+scale_fill_manual(values = batch_palette, name="Group")+theme(legend.position = "bottom"))),axis.text = element_text(size=15), axis.text = element_text(size=15), 
+
+```
+
+```{r}
+cell_type_plot <- ggplot(baked_barplot_valid_table,aes(sample_short, weight=count_obs_exp_percent_sum, fill = cell_type))+
+  labs(title = "Observed - Expected TE Family Overlap (Enrichment)", x = "Samples", y = "TE's peak overlap(%)")+
+  scale_fill_manual(name = "Cell Type",values = cell_palette, limits = force, guide = guide_legend(ncol = 4, title.position = "top",title.theme = element_text(size=12)))+#
+  plot_layout + plot_label_cell + 
+  facet_grid(~(assay), space="free_x", scales="free_x", switch="x")+theme(legend.position = "bottom",legend.key.size = unit(0.5,"lines"), legend.text=element_text(size=rel(0.8)))#+guides(fill=guide_legend(ncol=4)
+
+cell_type_plot
+
+leg_cell <- get_legend(cell_type_plot)
+as_ggplot(leg_cell)
+
+cell_type_plot <- ggplot(baked_barplot_valid_table,aes(sample_short, weight=count_obs_exp_percent_sum, fill = cell_type))+
+  labs(title = "Observed - Expected TE Family Overlap (Enrichment)", x = "Samples", y = "TE's peak overlap(%)")+
+  scale_fill_manual(name = "Cell Type",values = cell_palette, limits = force, guide = guide_legend(ncol = 5, title.position = "top",title.theme = element_text(size=12)))+#
+  plot_layout + plot_label_cell + 
+  facet_grid(~(assay), space="free_x", scales="free_x", switch="x")+theme(legend.position = "bottom",legend.key.size = unit(0.5,"lines"), legend.text=element_text(size=rel(0.8)))#+guides(fill=guide_legend(ncol=4)
+
+cell_type_plot
+
+leg_cell3 <- get_legend(cell_type_plot)
+as_ggplot(leg_cell3)
+```
+
+
+
+## Heatmap
+
+### Select important TE
+
+Select most notable TEs based on overall enrichment
+
+```{r te_important_te}
+
+#reduce to simple count table with no simple repeats
+te_counts_table <- clean_signif_te_df %>%
+  ungroup() %>% filter(family!="Simple_repeat") %>%
+  group_by(sample_name, name, family, assay, batch, cell_type, cell_full) %>%
+  summarise(count = sum(count), count_obs_exp = sum(count_obs_exp), count_obs_exp_percent = sum(count_obs_exp_percent), expected_count = sum(expected_count)) %>% ungroup()
+sum(te_counts_table$count_obs_exp_percent==0)
+
+
+#Sub group only by family not used, actually duplicate
+
+#Sub group only by subfamiliy and family; lose the sample perspective, results are cummulative sums
+important_repeats_grouped<- te_counts_table %>% group_by(name, family) %>% summarise(count = sum(count), count_obs_exp = sum(count_obs_exp), count_obs_exp_percent = sum(count_obs_exp_percent)) %>% ungroup()
+#Or
+important_repeats <- te_counts_table
+
+important_repeats <- important_repeats[order(important_repeats$family, important_repeats$name),]
+
+# get threshold of selection as outliers of the distribution
+ip_median <- median(important_repeats_grouped$count_obs_exp_percent)
+ip_iqr <- IQR(important_repeats_grouped$count_obs_exp_percent)
+ip_border <- quantile(important_repeats_grouped$count_obs_exp_percent, 0.75)+1.5*(ip_iqr)
+#ip_median+(ip_iqr/1.349)+1.5*(ip_iqr/ 1.349)
+
+#Select top enriched subfamilies (top 100, top 20)
+important_repeats_top <- top_n(important_repeats_grouped, 100, count_obs_exp_percent)
+important_repeats_top_20 <- top_n(important_repeats_grouped, 20, count_obs_exp_percent)
+important_repeats_top_list <- pull(important_repeats_top,name)
+important_repeats_ungrouped_top <- filter(important_repeats, name %in% important_repeats_top_list)
+
+#Actual selection: selected TEs
+# Simply put: aggregated all TEs for cummulative sums
+# here refering to those cummulative sums, keep the TEs where that cummulative sum is above the threshold
+# 
+selected_repeats <- pull(filter(important_repeats_grouped, count_obs_exp_percent>ip_border), name)
+important_repeats_valid <- filter(important_repeats, name %in% selected_repeats)
+
+
+important_repeats_valid_name <- selected_repeats
+
+```
+
+```{r fig2_important_te_plot, fig.width=9, fig.height=3}
+# the subfamilies with a most over_representation
+# important_repeats_valid #<-  used to be this
+f2_c1 <- ggplot(important_repeats,aes(x=reorder(name,-important_repeats_grouped[match(name, important_repeats_grouped$name),]$count_obs_exp_percent),weights=count_obs_exp_percent,fill=family))+
+  labs(title="Cummulative over-representation of subfamilies in samples", x=paste0(length(unique(important_repeats$name))," Repeat subfamilies"), y= "Cummulative Enrichment (%)")+
+  theme_classic2()+theme(axis.ticks.x = element_blank())+
+  theme(axis.text.x = element_blank())+#
+  scale_fill_manual(values = family_palette)+
+  scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+  geom_bar(width = 1)+
+  theme(legend.position = "none", 
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank())+
+  geom_vline(aes(xintercept = length(unique(important_repeats_valid$name))))+
+  #geom_vline(aes(xintercept = 20), linetype = "dotted")+
+  ggplot2::annotate(
+    geom = "text", x = length(unique(important_repeats_valid$name)), y = Inf, 
+    label =  paste0("Selected ",length(unique(important_repeats_valid$name))), hjust = 0, vjust = 1, size = 4
+  )+
+  ggplot2::annotate(geom = "rect", xmin = 0, xmax = length(unique(important_repeats_valid$name)), ymin = 0, ymax = Inf,
+  alpha = .1)+
+  #annotate(
+  #  geom = "text", x = 20, y = Inf, 
+  #  label =  paste0("Top ",20), hjust = 0, vjust = 1, size = 4
+  #)+
+  geom_hline(aes(yintercept = ip_border),linetype = "longdash" )
+f2_c1
+```
+
+```{r important_rep_boxplot, fig.width=2, fig.height=2, results="asis"}
+# the subfamilies with a most over_representation
+# important_repeats_valid #<-  used to be this
+
+
+f2_c2 <- ggplot(important_repeats_grouped,aes(y=count_obs_exp_percent))+
+  #labs( x="", y= "Cummulative Observed-Expected (%)")+
+  theme_classic2()+theme(axis.ticks.x = element_blank())+
+  coord_cartesian(y = c(0,ip_border*1.5))+
+  #scale_y_continuous(limits = c(0,NA))+#quantile(important_repeats_grouped$count_obs_exp_percent, 0.75))
+  #geom_hline(yintercept = ip_median)+
+  geom_jitter(aes(x=0,col = family),alpha=0.5, width = 0.3)+
+  theme(axis.text.x = element_blank(),panel.background = element_rect(fill = "white", colour = "white"), axis.title.x = element_blank(), axis.title.y = element_blank(),panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank())+#
+  scale_color_manual(values = family_palette)+
+  scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+  geom_hline(yintercept = ip_border, lty="longdash")+
+  geom_boxplot(outlier.shape = NA, size = 1, alpha = 0)+
+    theme(legend.position = "none")
+  #geom_hline(yintercept = median(important_repeats_grouped$count_obs_exp_percent), lty="dashed", color = "red") 
+f2_c2
+
+cat(paste0("Subfamilies considered: ",length(unique(important_repeats$name)),"\n"))
+cat(paste0("Subfamilies kept: ",length(unique(important_repeats_valid$name)),"\n"))
+cat(paste0("Mean: ",mean(important_repeats_grouped$count_obs_exp_percent),"+-",var(important_repeats_grouped$count_obs_exp_percent),"\n"))
+cat(paste0("Median: ",median(important_repeats_grouped$count_obs_exp_percent),"\n"))
+cat(paste0("Threshold: ",ip_border,"\n"))
+```
+
+```{r, fig.width=9, fig.height=3}
+
+f2_c_layout <- c(
+  area(t = 1, l = 1, b = 5, r = 5),
+  area(t = 1.5, l = 5, b = 4, r = 5)
+)
+
+f2_c <- (f2_c1 + f2_c2 + plot_layout(design = f2_c_layout))
+f2_c
+```
+
+
+### Enrichment breakdown
+
+```{r, fig.width=10, fig.height=3}
+
+
+tmpd <- clean_te_df %>% filter(family!="Simple_repeat") %>% mutate(enrichment=ifelse(valid, "Enriched", ifelse(count_obs_exp_percent>0,"NS","Depleted"))) %>% group_by(enrichment, assay) %>% summarise(n= n()) %>% group_by(assay) %>% mutate(prop = n/sum(n), total = sum(n))
+    
+    cmap <- c("Enriched"="#ca0020","Depleted"="#0571b0","NS"="#bababa")
+    
+    
+    f2_supp_enrdep <-  ggplot(tmpd, aes(x=assay, y=prop, fill=factor(enrichment, levels = rev(c("Enriched","NS","Depleted"))), label = ifelse(prop < .02, NA, paste0(round(prop*100,0),"%"))))+ labs(title = paste0("TE subfamily Enrichment overview"), y="Percentage of TE subfamilies across samples")+
+      theme_classic2(base_size = 14)+scale_fill_manual(values=cmap, name = "TE subfamily")+scale_y_continuous(labels = percent,expand = c(0,0))+
+      geom_col(position="fill", stat="identity")+geom_text(position = position_fill(vjust = 0.5))+coord_flip()+theme(legend.position = "bottom", axis.title.y = element_blank())
+    
+f2_supp_enrdep
+
+
+tmpd
+
+```
+
+
+
+```{r,fig.width=18, fig.height=5}
+tmpd2 <- clean_te_df %>% filter(family %notin% c("Simple_repeat","Low_complexity", "centr", "Satellite"))  %>% mutate(enrichment=ifelse(valid, "Enriched", ifelse(count_obs_exp_percent>0,"NS","Depleted"))) %>% group_by(enrichment, tfamily, assay) %>% summarise(n= n()) %>% group_by(tfamily, assay) %>% mutate(prop = n/sum(n), total = sum(n))
+
+tmpd2
+
+melt(tmpd2, id = c("enrichment","prop"))
+
+tmpd2_table <- dcast(tmpd2, tfamily+assay~enrichment, value.var = "prop")
+tmpd2_table
+
+
+
+f2_supp_enrdep_assay <- ggplot(tmpd2, aes(x=tfamily, y=prop, fill=factor(enrichment, levels = rev(c("Enriched","NS","Depleted"))), label = ifelse(prop < .05, NA, paste0(round(prop*100,0),"%"))))+ labs(title = paste0("TE subfamily Enrichment overview"), y="Percentage of TE subfamilies across samples")+
+      theme_classic2(base_size = 14)+scale_fill_manual(values=cmap, name = "TE subfamily", guide = guide_legend(reverse = TRUE))+scale_y_continuous(labels = percent,expand = c(0,0))+
+      geom_col(position="fill", stat="identity")+geom_text(position = position_fill(vjust = 0.5))+coord_flip()+theme(legend.position = "bottom", axis.title.y = element_blank())+facet_wrap(~assay, nrow = 1)
+
+f2_supp_enrdep_assay
+tmpd3 <- tmpd2 %>% group_by(tfamily) %>% summarise(total = sum(total))
+
+f2_supp_enrdep_count <- ggplot(tmpd3, aes(x=tfamily, y=total, fill=tfamily, label = total))+ labs(title = paste0("TE subfamily counts"), y="count")+
+      theme_classic2(base_size = 14)+scale_fill_manual(values=family_palette, name = "TE Family")+scale_y_continuous()+
+      geom_col()+geom_text(hjust="inward")+coord_flip()+theme(legend.position = "none", axis.title.y = element_blank())
+
+f2_supp_enrdep_count
+
+tmpd3
+
+(f2_supp_enrdep_assay+f2_supp_enrdep_count*theme( axis.text.y = element_blank()))+plot_layout(widths = c(6,1))
+```
+
+
+```{r fig.height=16, fig.width=18}
+f2_suppenr_layout <- "
+AAAAAA
+BBBBBB
+BBBBBB
+BBBBBB
+BBBBBB
+"
+
+f2_supp_enrdep/((f2_supp_enrdep_assay*theme(legend.position = "none")+f2_supp_enrdep_count*theme( axis.text.y = element_blank())+plot_layout(widths = c(6,1))))+plot_layout(design =f2_suppenr_layout)+plot_annotation(tag_levels = list(c('A','B',''))) #& theme(plot.tag = element_text(size = 12)) 
+```
+
+
+
+
+```{r, results="asis"}
+
+cat("\n\n")
+cat("The Enrichment Table \n\n")
+
+summarise(group_by(outliers,name, batch, assay),n=n())
+
+print_DT(tmpd2_table)
+
+write_csv(tmpd2_table, "PSTable3_enrichment_breakdown_table.csv", col_names = T)#"enrichment_breakdown_table.csv"
+cat("\n\n")
+
+
+
+
+```
+
+
+### heatmap set up
+
+
+```{r neo_heatmap_setup, message=FALSE}
+te_matrix = to_heatmatrix(
+  filter(ungroup(clean_te_df),
+         family!="Simple_repeat",
+         name %in% important_repeats_valid$name),
+  list(("sample_short"), ("name")),
+  "count_obs_exp_percent"
+  )
+te_matrix_reordered <- te_matrix[,filter(repeat_order_by_fam,family!="Simple_repeat",
+                                         name %in% colnames(te_matrix),
+                                         name %in% important_repeats_valid$name)$name]
+
+te_matrix_families <- ifelse(repeat_to_family[colnames(te_matrix_reordered)] %in% major_families, repeat_to_family[colnames(te_matrix_reordered)], "Other")#repeat_to_family[colnames(te_matrix_reordered)]#
+
+dend = cluster_within_group(te_matrix_reordered, te_matrix_families)
+te_fam_ordered <- unique(te_matrix_families[order.dendrogram(dend)])
+
+message("creating te_matrix_row_col")
+te_matrix_row_col <- list(
+  assay = get_rowcol(te_matrix_reordered,"assay","Hue"),
+  qc = get_rowcol(te_matrix_reordered,"qc_verdict","Greys"),
+  cell = get_rowcol(te_matrix_reordered,"cell_type","Hue"),
+  batch = get_rowcol(te_matrix_reordered,"batch","Hue"),
+  biomaterial = get_rowcol(te_matrix_reordered,"biomaterial","Hue"),
+  sex = get_rowcol(te_matrix_reordered,"sex","Hue"),
+  disease = get_rowcol(te_matrix_reordered,"disease","Hue"),
+  health = get_rowcol(te_matrix_reordered,"health","Hue"),
+  phealth = get_rowcol(te_matrix_reordered,"proxy_health","Hue")
+              )
+
+message("top ha")
+top_ha_fam = HeatmapAnnotation(family = unlist(lapply(colnames(te_matrix_reordered), 
+                                              function(x) ifelse(repeat_to_family[[x]] %in% major_families, repeat_to_family[[x]], "Other"))),
+                           col = list(family = family_palette)
+                           )
+
+row_ha_fam = HeatmapAnnotation('TE Family' = unlist(lapply(colnames(te_matrix_reordered), 
+                                              function(x) ifelse(repeat_to_family[[x]] %in% major_families, repeat_to_family[[x]], "Other"))),
+                           col = list('TE Family' = family_palette), which = "row",
+                           show_legend = T,
+                           annotation_legend_param = list(labels_gp = gpar(fontsize = 12), title_gp =gpar(fontsize = 13, fontface="bold"), at = te_fam_ordered)
+                           )
+
+row_ha_fam_2 = HeatmapAnnotation(family = unlist(lapply(colnames(te_matrix_reordered), 
+                                              function(x) ifelse(repeat_to_family[[x]] %in% major_families, repeat_to_family[[x]], "Other"))),
+                           col = list(family = family_palette), which = "row",
+                           show_legend = T
+                           )
+
+message("bot ha")
+bot_ha = HeatmapAnnotation(link = anno_mark(at = which( colnames(te_matrix_reordered) %in% important_repeats_top_20$name), 
+        labels = colnames(te_matrix_reordered)[colnames(te_matrix_reordered) %in% important_repeats_top_20$name], 
+        labels_gp = gpar(fontsize = 10),
+        padding = 0.5, side = "bottom"))
+
+message("row ha all")
+row_ha_all = rowAnnotation( batch = te_matrix_row_col[["batch"]]$name, 
+                             cell = te_matrix_row_col[["cell"]]$name,
+                             #disease = te_matrix_row_col[["disease"]]$name, 
+                             #health = te_matrix_row_col[["health"]]$name, 
+                             #biomaterial = te_matrix_row_col[["biomaterial"]]$name,
+                            health = te_matrix_row_col[["phealth"]]$name,
+                       col = list( batch= batch_palette,
+                                   cell= cell_palette,
+                                   #disease = disease_palette,
+                                   #health = health_palette,
+                                   #biomaterial = bio_palette,
+                                   health = phealth_palette
+                                   ),
+                       show_legend = c(length(unique(te_matrix_row_col[["batch"]]$name))<30,
+                                       length(unique(te_matrix_row_col[["cell"]]$name))<30,
+                                       #length(unique(te_matrix_row_col[["disease"]]$name))<30,
+                                       #length(unique(te_matrix_row_col[["health"]]$name))<30,
+                                       #length(unique(te_matrix_row_col[["biomaterial"]]$name))<30,
+                                       length(unique(te_matrix_row_col[["phealth"]]$name))<30
+                                       )
+                       )
+message("row_ha_all_nohealth")
+row_ha_all_nohealth = rowAnnotation( batch = te_matrix_row_col[["batch"]]$name, 
+                             cell = te_matrix_row_col[["cell"]]$name,
+                       col = list( batch= batch_palette,
+                                   cell= cell_palette
+                                   ),
+                       show_legend = c(length(unique(te_matrix_row_col[["batch"]]$name))<30,
+                                       length(unique(te_matrix_row_col[["cell"]]$name))<30
+                                       ),
+                       annotation_legend_param = list(labels_gp = gpar(fontsize = 8))
+                       )
+message("row_ha_all_nohealth_nolegend")
+row_ha_all_nohealth_nolegend = HeatmapAnnotation( batch = te_matrix_row_col[["batch"]]$name, 
+                             cell = te_matrix_row_col[["cell"]]$name,
+                       col = list( batch= batch_palette,
+                                   cell= cell_palette
+                                   ),
+                       show_legend = F,
+                       annotation_legend_param = list(labels_gp = gpar(fontsize = 8))
+                       )
+message("col_ha_all")
+col_ha_all = HeatmapAnnotation( batch = te_matrix_row_col[["batch"]]$name, 
+                             cell = te_matrix_row_col[["cell"]]$name,
+                             #disease = te_matrix_row_col[["disease"]]$name, 
+                             #health = te_matrix_row_col[["health"]]$name, 
+                             #biomaterial = te_matrix_row_col[["biomaterial"]]$name,
+                            health = te_matrix_row_col[["phealth"]]$name,
+                       col = list( batch= batch_palette,
+                                   cell= cell_palette,
+                                   #disease = disease_palette,
+                                   #health = health_palette,
+                                   #biomaterial = bio_palette,
+                                   health = phealth_palette
+                                   ),
+                       show_legend = c(length(unique(te_matrix_row_col[["batch"]]$name))<30,
+                                       length(unique(te_matrix_row_col[["cell"]]$name))<30,
+                                       #length(unique(te_matrix_row_col[["disease"]]$name))<30,
+                                       #length(unique(te_matrix_row_col[["health"]]$name))<30,
+                                       #length(unique(te_matrix_row_col[["biomaterial"]]$name))<30,
+                                       length(unique(te_matrix_row_col[["phealth"]]$name))<30
+                                       )
+                       )
+message("top_ha_bars")
+
+top_ha_bars = HeatmapAnnotation(
+    show_annotation_name = T,
+    instances = anno_barplot(
+      log10(rmsk_table_agg[colnames(te_matrix_reordered),]$count),
+        bar_width = 1, 
+        gp = gpar(lty = 0,
+                  fill = family_palette[te_matrix_families] 
+                  ), 
+        border = FALSE,
+        height = unit(1, "cm")
+    ),
+    TE_size = anno_barplot(
+      pmin(rmsk_table_agg[colnames(te_matrix_reordered),]$length,1000),
+        bar_width = 1, 
+        gp = gpar(lty = 0,
+                  fill = family_palette[te_matrix_families ] 
+                  ), 
+        border = FALSE,
+        height = unit(1, "cm")
+    ),
+    repeats = te_matrix_families,
+    col = list(repeats = family_palette),
+    name = "TE family",
+    #annotation_label = c("log10(instances)", "TE mean size", "TE family"),
+    annotation_label = c("log10(Count)", "Size", "TE family"),
+    annotation_name_gp = gpar(fontsize = 8),
+    annotation_name_side = "left",
+    gap = unit(5, "points"),
+    annotation_name_rot = 0,
+                       annotation_legend_param = list(labels_gp = gpar(fontsize = 8))
+    
+    )
+
+top_cell <- HeatmapAnnotation( 
+                             'Cell Type' = a_samp_info[rownames(te_matrix_reordered),]$cell_type,#te_matrix_row_col[["cell"]]$name,
+                       col = list( 
+                                   'Cell Type'= cell_palette
+                                   ),
+                       show_legend = c(
+                                       FALSE
+                                       ),
+                       annotation_legend_param = list(labels_gp = gpar(fontsize = 8) )
+                       
+                       )
+#,at = te_fam_ordered_hm
+col_fun = colorRamp2(c(-0.0025,-0.000125, 0, 0.000125,0.0025), c("#4575b4", "#abd9e9" ,"#ffffbf", "#fdae61" ,"#d73027"))
+```
+
+### Heatmaps solo
+
+```{r}
+col_fun_p = colorRamp2(c(-0.01,-0.00125, 0, 0.00125,0.01)*100, c("#4575b4", "#92c5de" ,"#f7f7f7", "#f4a582" ,"#ca0020"))
+
+f2_d_7 <- Heatmap(t(te_matrix_reordered)*100,
+        name = "obs-exp",
+        cluster_rows = dend,
+        column_order = order(xtfrm(a_samp_info[colnames(t(te_matrix_reordered)),]$cell_type),
+                          xtfrm(a_samp_info[colnames(t(te_matrix_reordered)),]$proxy_health)
+                          ),
+        left_annotation = row_ha_fam,
+        top_annotation = top_cell,
+        show_column_dend = FALSE,
+        show_row_names = FALSE,
+        show_column_names = FALSE,
+        show_row_dend = FALSE,
+        col = col_fun_p,
+        column_split = te_matrix_row_col[["assay"]]$name,
+        column_title_gp = gpar( fontsize = 12),
+        row_title = "TE subfamilies",
+        column_gap = unit(2, "mm"),
+        column_title_side = "top",
+        row_title_side = "left",
+        heatmap_legend_param = list(labels_gp = gpar(fontsize = 12), title_gp =gpar(fontsize = 13, fontface="bold"),col_fun = col_fun_p, title = "Obs-Exp(%)", direction = "vertical")
+        )
+f2_d_7
+
+f2_d_72 <- Heatmap(t(te_matrix_reordered)*100,
+        name = "obs-exp",
+        cluster_rows = dend,
+        column_order = order(xtfrm(a_samp_info[colnames(t(te_matrix_reordered)),]$cell_type),
+                          xtfrm(a_samp_info[colnames(t(te_matrix_reordered)),]$proxy_health)
+                          ),
+        left_annotation = row_ha_fam_2,
+        top_annotation = top_cell,
+        show_column_dend = FALSE,
+        show_row_names = FALSE,
+        show_column_names = FALSE,
+        show_row_dend = FALSE,
+        col = col_fun_p,
+        column_split = factor(te_matrix_row_col[["assay"]]$name, levels = assay_order),
+        column_title_gp = gpar( fontsize = 12),
+        row_title = "TE subfamilies",
+        column_gap = unit(2, "mm"),
+        column_title_side = "top",
+        row_title_side = "left",
+        heatmap_legend_param = list(labels_gp = gpar(fontsize = 12), title_gp =gpar(fontsize = 13, fontface="bold"),col_fun = col_fun_p, title = "Obs-Exp(%)", direction = "vertical")
+        )
+f2_d_72
+
+col_fun_p2 = colorRamp2(c(-0.0025,-0.000125, 0, 0.000125,0.0025)*100, c("#4575b4", "#92c5de" ,"#f7f7f7", "#f4a582" ,"#ca0020"))
+
+f2_d_8 <- Heatmap(t(te_matrix_reordered)*100,
+        name = "obs-exp",
+        cluster_rows = dend,
+        column_order = order(xtfrm(a_samp_info[colnames(t(te_matrix_reordered)),]$cell_type),
+                          xtfrm(a_samp_info[colnames(t(te_matrix_reordered)),]$proxy_health)
+                          ),
+        cluster_column_slices = FALSE,
+        left_annotation = row_ha_fam,
+        top_annotation = top_cell,
+        show_column_dend = FALSE,
+        show_row_names = FALSE,
+        show_column_names = FALSE,
+        show_row_dend = FALSE,
+        col = col_fun_p2,
+        column_split = factor(te_matrix_row_col[["assay"]]$name, levels = assay_order),
+        column_title_gp = gpar( fontsize = 12),
+        row_title = "TE subfamilies",
+        column_gap = unit(2, "mm"),
+        column_title_side = "top",
+        row_title_side = "left",
+        heatmap_legend_param = list(labels_gp = gpar(fontsize = 12), title_gp =gpar(fontsize = 13, fontface="bold"), col_fun = col_fun_p2, title = "Obs-Exp(%)", direction = "vertical")
+        )
+f2_d_8
+```
+
+
+
+```{r}
+#Make heatmaps Patchwork compatible
+
+gb_alt_7 = grid.grabExpr(draw(f2_d_7,  heatmap_legend_side = "right", merge_legend = T))
+gb_alt_72 = grid.grabExpr(draw(f2_d_72,  heatmap_legend_side = "right", merge_legend = T))
+gb_alt_8 = grid.grabExpr(draw(f2_d_8,  heatmap_legend_side = "right", merge_legend = T))
+```
+
+
+
+
+## Composed Figure 2
+
+
+```{r,fig.width=14, fig.height=16}
+
+f2_layout <- "
+AAAAAA
+AAAAAA
+AAAAAA
+BBBBBB
+BBBBBB
+BBBBBB
+CCCCCC
+CCCCCC
+"
+((wrap_elements(f2alt_b1/(f2alt_b3*coord_cartesian(ylim = c(-0.07,0.70)))+plot_layout(guides = "collect"))+ wrap_elements(gb_alt_8)+as_ggplot(leg_cell)) + plot_layout(design = f2_layout) + plot_annotation(tag_levels = list(c('A','B',''))))
+
+((wrap_elements(f2alt_b1/(f2alt_b3*coord_cartesian(ylim = c(-0.07,0.70)))+plot_layout(guides = "collect"))+ wrap_elements(gb_alt_8)+as_ggplot(leg_cell3)) + plot_layout(design = f2_layout) + plot_annotation(tag_levels = list(c('A','B',''))))
+```
+
+
+# Figure 3: TE Age
+
+## Age dynamic overview
+
+Regression Plots
+each point is the mean TE subfamily enrichment across the samples (of the given mark)
+
+```{r fig4_age_reg_map, fig.width=10, fig.height=7, results="asis" }
+cfams <- c("Alu","MIR","L2")# Alu only in f4_a (a bit later in this chunk)
+
+
+md <- filter(clean_te_df, family!="Simple_repeat", family %in% cfams)  %>% group_by(family) %>% mutate(instance_50th = quantile(instances_rmsk, 0.5), big = instances_rmsk>=1000 | instances_rmsk>=instance_50th) %>% ungroup() %>% mutate(mappa = mappability_table[match(name,mappability_table$name),]$prop, keep= big & mappa>=0.85)
+
+mdg <- summarise(group_by(filter(md),name,assay,keep, family),count_obs_exp_percent = mean(count_obs_exp_percent))
+
+f4_s1_a <- ggplot(mdg,aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent,label = name,color = family, shape = ifelse(keep,16,4)))+
+    labs(x = "Age (Myrs)", y = "Observed - expected (%)")+
+  theme_classic2(base_size = 14)+
+    scale_color_manual(values = family_palette, limits = force)+ scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+   geom_point(aes(), alpha = 0.3)+
+  scale_shape_identity()+
+    theme(legend.position = "bottom",panel.background = element_rect(fill = "white", colour = "black"))+
+    stat_cor(data=subset(md, big==T),size=2,label.y.npc = "bottom") +
+    geom_smooth(data=subset(mdg, keep==T), aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent), method = "lm",se=F,lwd=1)+
+    geom_hline(yintercept = 0, lwd = 0.5, color = "black", alpha = 1)+
+    facet_wrap(~assay)
+
+f4_s1_a
+
+## HERE ALU
+cfams <- c("Alu")
+
+md <- filter(clean_te_df, family!="Simple_repeat", family %in% cfams)  %>% group_by(family) %>% mutate(instance_50th = quantile(instances_rmsk, 0.5), big = instances_rmsk>=1000 | instances_rmsk>=instance_50th) %>% ungroup() %>% mutate(mappa = mappability_table[match(name,mappability_table$name),]$prop, keep= big & mappa>=0.85)
+
+mdg <- summarise(group_by(filter(md),name,assay,keep, family),count_obs_exp_percent = mean(count_obs_exp_percent))
+
+ggplot(mdg,aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent,label = name,color = family, shape = ifelse(keep,16,4)))+
+    labs( x = "Age (Myrs)", y = "Observed - expected (%)")+
+  theme_classic2(base_size = 14)+
+    scale_color_manual(values = family_palette, limits = force)+ scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+   geom_point(aes(), alpha = 0.3)+
+  scale_shape_identity()+
+    theme(legend.position = "none",panel.background = element_rect(fill = "white", colour = "black"))+
+    stat_cor(data=subset(md, big==T),size=3,label.y.npc = "bottom") +
+    geom_smooth(data=subset(mdg, keep==T), aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent), method = "lm",se=T,lwd=1)+
+    geom_hline(yintercept = 0, lwd = 0.5, color = "black", alpha = 1)+
+    facet_wrap(~assay)
+
+
+cfams <- c("Alu")
+
+md <- filter(clean_te_df, family!="Simple_repeat", family %in% cfams, assay %in% c("H3K9me3","H3K36me3","H3K27me3"))  %>% group_by(family) %>% mutate(instance_50th = quantile(instances_rmsk, 0.5), big = instances_rmsk>=1000 | instances_rmsk>=instance_50th) %>% ungroup() %>% mutate(mappa = mappability_table[match(name,mappability_table$name),]$prop, keep= big & mappa>=0.85) #%>% mutate(assay = factor(assay,levels = assay_order))
+
+mdg <- summarise(group_by(filter(md),name,assay,keep, family),count_obs_exp_percent = mean(count_obs_exp_percent))
+
+f4_a <- ggplot(mdg,aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent,label = name,color = family, shape = ifelse(keep,16,4)))+
+    labs( x = "Age (Myrs)", y = "Observed - expected (%)")+
+  theme_classic2(base_size = 14)+
+    scale_color_manual(values = family_palette, limits = force)+ scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+   geom_point(aes(), alpha = 0.8)+
+  scale_shape_identity()+
+    theme(legend.position = "bottom",panel.background = element_rect(fill = "white", colour = "black"))+
+    stat_cor(data=subset(md, big==T),size=3, label.y.npc = "bottom") +
+    geom_smooth(data=subset(mdg, keep==T), aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent), method = "lm",se=T,lwd=1)+
+    geom_hline(yintercept = 0, lwd = 0.5, color = "black", alpha = 1)+
+    facet_wrap(~assay)
+
+f4_a
+
+
+  cfams <- c("L1","ERVL-MaLR")
+  bigfamilies_f4b <- summarise(group_by(filter(clean_te_df,family %in% cfams, assay %in% c("H3K9me3","H3K36me3","H3K27me3")),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)) %>% mutate( instance_count = rmsk_table_agg[name,]$count) %>% ungroup() %>% slice_max(instance_count, prop = 0.9)
+f4_bz <- ggplot(summarise(group_by(filter(clean_te_df,family %in% cfams, assay %in% c("H3K9me3","H3K36me3","H3K27me3")),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)),aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent,label = name, color = repeat_to_family[name],shape = ifelse(name %in% bigfamilies_f4b$name,16,4),))+
+    labs(title = "", x = "Age (Myrs)", y = "Observed - expected (%)")+
+  theme_classic2(base_size = 14)+theme(panel.background = element_rect(fill = "white", colour = "black"))+geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    scale_color_manual(name = "Family",values = family_palette, limits = force)+ scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+   geom_point(alpha = 0.5, aes())+scale_x_continuous(limits = c(0,150))+
+    scale_shape_identity() +
+    scale_size("Size (log10)", range = c(0,2))+
+    theme(legend.position = "bottom", plot.title = element_blank(), panel.margin = unit(1, "cm")) +
+    geom_smooth(data=bigfamilies_f4b, aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent), method = "lm",se=T,lwd=1)+
+    facet_wrap(~assay)+guides()#+coord_cartesian(ylim = c()), scales = "free_y"
+f4_bz
+
+
+cfams <- c("L1","ERVL-MaLR")
+
+md <- filter(clean_te_df, family!="Simple_repeat", family %in% cfams, assay %in% c("H3K9me3","H3K36me3","H3K27me3"))  %>% group_by(family) %>% mutate(instance_50th = quantile(instances_rmsk, 0.5), big = instances_rmsk>=1000 | instances_rmsk>=instance_50th) %>% ungroup() %>% mutate(mappa = mappability_table[match(name,mappability_table$name),]$prop, keep= big & mappa>=0.85)
+
+mdg <- summarise(group_by(filter(md),name,assay,keep, family),count_obs_exp_percent = mean(count_obs_exp_percent))
+
+f4_b <- ggplot(mdg,aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent,label = name,color = family, shape = ifelse(keep,16,4)))+
+    labs( x = "Age (Myrs)", y = "Observed - expected (%)")+
+  theme_classic2(base_size = 14)+
+    scale_color_manual(values = family_palette, limits = force)+ scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+   geom_point(aes(), alpha = 0.8)+
+  scale_shape_identity()+
+    theme(legend.position = "bottom",panel.background = element_rect(fill = "white", colour = "black"))+#1-posh*0.9
+    stat_cor(data=subset(md, big==T),size=3,label.y.npc = "bottom") +#label.x = 3, label.y = 34
+    #stat_regline_equation(data=subset(md, big==T),size=2,label.y.npc = (1-0.05)-posh*0.9,
+    #                      aes(label =  paste(..eq.label.., ..adj.rr.label..,sep = "~~~~")))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    #geom_smooth(method = "lm",aes(color = cell_type),se=F,lwd=0.5)+
+    geom_smooth(data=subset(mdg, keep==T), aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent), method = "lm",se=T,lwd=1)+
+    geom_hline(yintercept = 0, lwd = 0.5, color = "black", alpha = 1)+
+    facet_wrap(~assay)
+
+f4_b
+
+
+
+
+md <- filter(clean_te_df, family!="Simple_repeat", family %in% cfams)  %>% group_by(family) %>% mutate(instance_50th = quantile(instances_rmsk, 0.5), big = instances_rmsk>=1000 | instances_rmsk>=instance_50th) %>% ungroup() %>% mutate(mappa = mappability_table[match(name,mappability_table$name),]$prop, keep= big & mappa>=0.85)
+
+mdg <- summarise(group_by(filter(md),name,assay,keep, family),count_obs_exp_percent = mean(count_obs_exp_percent))
+
+f4_s1_b <- ggplot(mdg,aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent,label = name,color = family, shape = ifelse(keep,16,4)))+
+    labs( x = "Age (Myrs)", y = "Observed - expected (%)")+
+  theme_classic2(base_size = 14)+
+    scale_color_manual(values = family_palette, limits = force)+ scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+   geom_point(aes(), alpha = 0.8)+
+  scale_shape_identity()+
+    theme(legend.position = "bottom",panel.background = element_rect(fill = "white", colour = "black"))+
+    stat_cor(data=subset(md, big==T),size=3,label.y.npc = "bottom") +#label.x = 3, label.y = 34
+    #stat_regline_equation(data=subset(md, big==T),size=2,label.y.npc = (1-0.05)-posh*0.9,
+    #                      aes(label =  paste(..eq.label.., ..adj.rr.label..,sep = "~~~~")))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    #geom_smooth(method = "lm",aes(color = cell_type),se=F,lwd=0.5)+
+    geom_smooth(data=subset(mdg, keep==T), aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent), method = "lm",se=T,lwd=1)+
+    geom_hline(yintercept = 0, lwd = 0.5, color = "black", alpha = 1)+
+    facet_wrap(~assay)
+
+f4_s1_b
+
+f4_s1_b2 <- ggplot(mdg,aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent,label = name,color = family, shape = ifelse(keep,16,4)))+
+    labs( x = "Age (Myrs)", y = "Observed - expected (%)")+
+  theme_classic2(base_size = 14)+
+    scale_color_manual(values = family_palette, limits = force)+ scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+   geom_point(aes(), alpha = 0.8)+
+  scale_shape_identity()+
+    theme(legend.position = "bottom",panel.background = element_rect(fill = "white", colour = "black"))+
+    stat_cor(data=subset(md, big==T),size=2,label.y = c(0.015,0.013)) +#label.y.npc = "top"#label.x = 3, label.y = 34
+    #stat_regline_equation(data=subset(md, big==T),size=2,label.y.npc = (1-0.05)-posh*0.9,
+    #                      aes(label =  paste(..eq.label.., ..adj.rr.label..,sep = "~~~~")))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    #geom_smooth(method = "lm",aes(color = cell_type),se=F,lwd=0.5)+
+    geom_smooth(data=subset(mdg, keep==T), aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent), method = "lm",se=F,lwd=1)+
+    geom_hline(yintercept = 0, lwd = 0.5, color = "black", alpha = 1)+
+    facet_wrap(~assay)
+
+f4_s1_b2
+
+
+
+  cfams <- c("L1","ERVL-MaLR")
+  
+md <- filter(clean_te_df, family!="Simple_repeat", family %in% cfams)  %>% group_by(family) %>% mutate(instance_50th = quantile(instances_rmsk, 0.5), big = instances_rmsk>=1000 | instances_rmsk>=instance_50th) %>% ungroup() %>% mutate(mappa = mappability_table[match(name,mappability_table$name),]$prop, keep= big & mappa>=0.85)
+
+mdg <- summarise(group_by(filter(md),name,assay,keep, family),count_obs_exp_percent = mean(count_obs_exp_percent))
+
+ggplot(mdg,aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent,label = name,color = family, shape = ifelse(keep,16,4)))+
+    labs( x = "Age (Myrs)", y = "Observed - expected (%)")+
+  theme_classic2(base_size = 14)+
+    scale_color_manual(values = family_palette, limits = force)+ scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+   geom_point(aes(), alpha = 0.3)+
+  scale_shape_identity()+
+    theme(legend.position = "bottom",panel.background = element_rect(fill = "white", colour = "black"))+
+    stat_cor(data=subset(md, big==T),size=3,label.y.npc = "bottom") +
+    geom_smooth(data=subset(mdg, keep==T), aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent), method = "lm",se=T,lwd=1)+
+    geom_hline(yintercept = 0, lwd = 0.5, color = "black", alpha = 1)+
+    facet_wrap(~assay)
+
+  
+  cfams <- c("ERVL","ERVK","ERV1")
+md <- filter(clean_te_df, family!="Simple_repeat", family %in% cfams)  %>% group_by(family) %>% mutate(instance_50th = quantile(instances_rmsk, 0.5), big = instances_rmsk>=1000 | instances_rmsk>=instance_50th) %>% ungroup() %>% mutate(mappa = mappability_table[match(name,mappability_table$name),]$prop, keep= big & mappa>=0.85)
+
+mdg <- summarise(group_by(filter(md),name,assay,keep, family),count_obs_exp_percent = mean(count_obs_exp_percent))
+
+f4_s1_c <- ggplot(mdg,aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent,label = name,color = family, shape = ifelse(keep,16,4)))+
+    labs( x = "Age (Myrs)", y = "Observed - expected (%)")+
+  theme_classic2(base_size = 14)+
+    scale_color_manual(values = family_palette, limits = force)+ scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+   geom_point(aes(), alpha = 0.3)+
+  scale_shape_identity()+
+    theme(legend.position = "bottom",panel.background = element_rect(fill = "white", colour = "black"))+
+    stat_cor(data=subset(md, big==T),size=2,label.y.npc = "bottom") +
+    geom_smooth(data=subset(mdg, keep==T), aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent), method = "lm",se=F,lwd=1)+
+    geom_hline(yintercept = 0, lwd = 0.5, color = "black", alpha = 1)+
+    facet_wrap(~assay)
+f4_s1_c
+
+  cfams <- c("TcMar-Tigger","CR1")
+  bigfamilies <- summarise(group_by(filter(clean_te_df,family %in% cfams, assay %in% c("H3K9me3","H3K36me3","H3K27me3")),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)) %>% mutate( instance_count = rmsk_table_agg[name,]$count) %>% ungroup() %>% slice_max(instance_count, prop = 0.9)
+md <- filter(clean_te_df, family!="Simple_repeat", family %in% cfams)  %>% group_by(family) %>% mutate(instance_50th = quantile(instances_rmsk, 0.5), big = instances_rmsk>=1000 | instances_rmsk>=instance_50th) %>% ungroup() %>% mutate(mappa = mappability_table[match(name,mappability_table$name),]$prop, keep= big & mappa>=0.85)
+
+mdg <- summarise(group_by(filter(md),name,assay,keep, family),count_obs_exp_percent = mean(count_obs_exp_percent))
+
+ggplot(mdg,aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent,label = name,color = family, shape = ifelse(keep,16,4)))+
+    labs( x = "Age (Myrs)", y = "Observed - expected (%)")+
+  theme_classic2(base_size = 14)+
+    scale_color_manual(values = family_palette, limits = force)+ scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+   geom_point(aes(), alpha = 0.3)+
+  scale_shape_identity()+
+    theme(legend.position = "bottom",panel.background = element_rect(fill = "white", colour = "black"))+
+    stat_cor(data=subset(md, big==T),size=3,label.y.npc = "bottom") +
+    geom_smooth(data=subset(mdg, keep==T), aes(x=repeat_to_age[name]/1e6,y=count_obs_exp_percent), method = "lm",se=T,lwd=1)+
+    geom_hline(yintercept = 0, lwd = 0.5, color = "black", alpha = 1)+
+    facet_wrap(~assay)
+
+```
+
+
+```{r fig4_age_vs_size_reg, fig.width=10, fig.height=7, results="asis" }
+cfams <- c("MIR","Alu","L2")
+
+bigfamilies1 <- summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)) %>% mutate( instance_count = rmsk_table_agg[name,]$count) %>% ungroup() %>% slice_max(instance_count, prop = 0.9)
+
+ggplot(summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)),aes(x=log10(rmsk_table_agg[name,]$count),y=count_obs_exp_percent,label = name, color = repeat_to_family[name],shape = ifelse(name %in% bigfamilies1$name,16,4)))+
+    labs(title = "", x = "Log10(Instance count)", y = "Obs - Exp (%)")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+
+    scale_color_manual(name = "Family", values = family_palette)+ scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+    scale_shape_identity() +
+   geom_point( )+
+    
+    scale_size("Size (log10)", range = c(0,3))+ 
+    theme(legend.position = "bottom", plot.title = element_blank(), panel.margin = unit(1, "cm")) + #theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    #geom_smooth(method = "lm",se=F,lwd=0.5)+
+    geom_smooth(data=bigfamilies1, aes(x=log10(rmsk_table_agg[name,]$count),y=count_obs_exp_percent), method = "lm",se=F,lwd=1)+
+    facet_wrap(~assay)
+
+ggplot(summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)),aes(x=rmsk_table_agg[name,]$length ,y=count_obs_exp_percent,label = name, color = repeat_to_family[name],shape = ifelse(name %in% bigfamilies1$name,16,4)))+
+    labs(title = "", x = "Length (bp)", y = "Obs - Exp (%)")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+
+    scale_color_manual(name = "Family", values = family_palette)+ scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+    scale_shape_identity() +
+   geom_point( )+
+    
+    scale_size("Size (log10)", range = c(0,3))+ 
+    theme(legend.position = "bottom", plot.title = element_blank(), panel.margin = unit(1, "cm")) + #theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    #geom_smooth(method = "lm",se=F,lwd=0.5)+
+    geom_smooth(data=bigfamilies1, aes(x=rmsk_table_agg[name,]$length,y=count_obs_exp_percent), method = "lm",se=F,lwd=1)+
+    facet_wrap(~assay)
+
+ggplot(summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)),aes(x=rmsk_table_agg[name,]$count,y=count_obs_exp_percent,label = name, color = repeat_to_family[name],shape = ifelse(name %in% bigfamilies1$name,16,4)))+
+    labs(title = "", x = "Instance count", y = "Obs - Exp (%)")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+
+    scale_color_manual(name = "Family", values = family_palette)+ scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+    scale_shape_identity() +
+   geom_point( )+
+    
+    scale_size("Size (log10)", range = c(0,3))+ 
+    theme(legend.position = "bottom", plot.title = element_blank(), panel.margin = unit(1, "cm")) + #theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    #geom_smooth(method = "lm",se=F,lwd=0.5)+
+    geom_smooth(data=bigfamilies1, aes(x=rmsk_table_agg[name,]$count,y=count_obs_exp_percent), method = "lm",se=F,lwd=1)+
+    facet_wrap(~assay)
+
+
+tdata <-  summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)) %>% ungroup() %>% mutate(bigfam = as.numeric(ifelse(name %in% bigfamilies1$name,16,4)), size = 0.1*log10(rmsk_table_agg[name,]$count))
+
+f4_s2_a <- ggplot(tdata,aes(x=repeat_to_age[name]/1e6,y=log10(rmsk_table_agg[name,]$count),label = name, color = repeat_to_family[name],  shape = bigfam))+
+    labs(title = "", x = "Age (Myrs)", y = "Log10(TE instance count)")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+
+    scale_color_manual(name = "Family", values = family_palette)+ scale_y_continuous(limits = c(NA,NA))+
+    scale_shape_identity() +
+   geom_point( )+
+    
+    #scale_size("Size (log10)", range = c(0,3))+ 
+    theme(legend.position = "bottom", plot.title = element_blank(), panel.margin = unit(1, "cm")) + #theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    #geom_smooth(method = "lm",se=F,lwd=0.5)+
+    geom_smooth(data=bigfamilies1, aes(x=repeat_to_age[name]/1e6,y=log10(rmsk_table_agg[name,]$count), shape=NULL),method = "lm",se=F,lwd=1)#+guides()
+f4_s2_a
+#No log scale
+ggplot(summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)),aes(x=repeat_to_age[name]/1e6,y=rmsk_table_agg[name,]$count,label = name, color = repeat_to_family[name],size = 0.1*log10(rmsk_table_agg[name,]$count),shape = ifelse(name %in% bigfamilies1$name,16,4)))+
+    labs(title = "", x = "Age (Myrs)", y = "TE instance count")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+
+    scale_color_manual(name = "Family", values = family_palette)+ scale_y_continuous(limits = c(NA,NA))+
+    scale_shape_identity() +
+   geom_point( )+
+    
+    scale_size("Size (log10)", range = c(0,3))+ 
+    theme(legend.position = "bottom", plot.title = element_blank(), panel.margin = unit(1, "cm")) + #theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    #geom_smooth(method = "lm",se=F,lwd=0.5)+
+    geom_smooth(data=bigfamilies1, aes(x=repeat_to_age[name]/1e6,y=rmsk_table_agg[name,]$count), method = "lm",se=F,lwd=1)+guides(color = FALSE)
+
+#Length
+f4_s2_b <- ggplot(tdata,aes(x=repeat_to_age[name]/1e6,y=(rmsk_table_agg[name,]$length),label = name, color = repeat_to_family[name],shape = bigfam))+
+    labs(title = "", x = "Age (Myrs)", y = "TE Length (bp)")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+
+    scale_color_manual(name = "Family", values = family_palette)+ scale_y_continuous(limits = c(NA,NA))+
+    scale_shape_identity() +
+   geom_point( )+
+    
+    scale_size("Size (log10)", range = c(0,3))+ 
+    theme(legend.position = "bottom", plot.title = element_blank(), panel.margin = unit(1, "cm")) + #theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    #geom_smooth(method = "lm",se=F,lwd=0.5)+
+    geom_smooth(data=bigfamilies1, aes(x=repeat_to_age[name]/1e6,y=(rmsk_table_agg[name,]$length), shape = NULL), method = "lm",se=F,lwd=1)+guides()
+f4_s2_b
+
+bigfamilies1 <- summarise(group_by(filter(clean_te_df,family %in% cfams, assay %in% c("H3K9me3","H3K36me3","H3K27me3")),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)) %>% mutate( instance_count = rmsk_table_agg[name,]$count) %>% ungroup() %>% slice_max(instance_count, prop = 0.9)
+
+ggplot(summarise(group_by(filter(clean_te_df,family %in% cfams, assay %in% c("H3K9me3","H3K36me3","H3K27me3")),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)),aes(x=repeat_to_age[name]/1e6,y=log10(rmsk_table_agg[name,]$count),label = name, color = repeat_to_family[name],size = 0.1*log10(rmsk_table_agg[name,]$count),shape = ifelse(name %in% bigfamilies1$name,16,4)))+
+    labs(title = "", x = "Age (Myrs)", y = "Log10(TE instance count)")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+
+    scale_color_manual(name = "Family", values = family_palette)+ scale_y_continuous(limits = c(NA,NA))+
+    scale_shape_identity() +
+   geom_point( )+
+    
+    scale_size("Size (log10)", range = c(0,3))+ 
+    theme(legend.position = "bottom", plot.title = element_blank(), panel.margin = unit(1, "cm")) + #theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    #geom_smooth(method = "lm",se=F,lwd=0.5)+
+    geom_smooth(data=bigfamilies1, aes(x=repeat_to_age[name]/1e6,y=log10(rmsk_table_agg[name,]$count)), method = "lm",se=F,lwd=1)+
+    facet_wrap(~assay)+guides(color = FALSE)
+
+    
+#Other Fams
+  cfams <- c("L1","ERVL-MaLR")
+  bigfamilies <- summarise(group_by(filter(clean_te_df,family %in% cfams, assay %in% c("H3K9me3","H3K36me3","H3K27me3")),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)) %>% mutate( instance_count = rmsk_table_agg[name,]$count) %>% ungroup() %>% slice_max(instance_count, prop = 0.9)
+ggplot(summarise(group_by(filter(clean_te_df,family %in% cfams, assay %in% c("H3K9me3","H3K36me3","H3K27me3")),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)),aes(x=repeat_to_age[name]/1e6,y=log10(rmsk_table_agg[name,]$count),label = name, color = repeat_to_family[name],size = ifelse(name %in% bigfamilies$name,0.1*log10(rmsk_table_agg[name,]$count),0.4),shape = ifelse(name %in% bigfamilies$name,16,4),))+
+    labs(title = "", x = "Age (Myrs)", y = "Log10(TE instance count)")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    scale_color_manual(name = "Family",values = family_palette)+ scale_y_continuous(limits = c(NA,NA))+
+   geom_point(alpha = 0.5, aes())+
+    scale_shape_identity() +
+    scale_size("Size (log10)", range = c(0,2))+
+    theme(legend.position = "bottom", plot.title = element_blank()) + #theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    
+    #geom_smooth(method = "lm",se=F,lwd=0.5)+
+    geom_smooth(data=bigfamilies, aes(x=repeat_to_age[name]/1e6,y=log10(rmsk_table_agg[name,]$count)), method = "lm",se=F,lwd=1)+
+    facet_wrap(~assay, scales = "free_y")+guides(color = FALSE)#+coord_cartesian(ylim = c())
+
+
+#L1 ERV Set
+  cfams <- c("L1","ERVL-MaLR")
+  bigfamilies <- summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)) %>% mutate( instance_count = rmsk_table_agg[name,]$count) %>% ungroup() %>% slice_max(instance_count, prop = 0.9)
+
+tdata <-  summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)) %>% ungroup() %>% mutate(bigfam = as.numeric(ifelse(name %in% bigfamilies$name,16,4)), size = 0.1*log10(rmsk_table_agg[name,]$count))
+
+  
+f4_s2_c <-  ggplot(tdata, aes(x=repeat_to_age[name]/1e6,y=log10(rmsk_table_agg[name,]$count),label = name, color = repeat_to_family[name],shape = bigfam))+
+    labs(title = "", x = "Age (Myrs)", y = "Log10(TE instance count)")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    scale_color_manual(name = "Family",values = family_palette)+ scale_y_continuous(limits = c(NA,NA))+
+   geom_point(alpha = 0.5, aes())+
+    scale_shape_identity() +
+    #scale_size("Size (log10)", range = c(0,2))+
+    theme(legend.position = "bottom", plot.title = element_blank()) + #theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    
+    #geom_smooth(method = "lm",se=F,lwd=0.5)+
+    geom_smooth(data=bigfamilies, aes(x=repeat_to_age[name]/1e6,y=log10(rmsk_table_agg[name,]$count), shape = NULL), method = "lm",se=F,lwd=1)#+guides(color = FALSE)+coord_cartesian(ylim = c())
+
+f4_s2_c
+
+ggplot(summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)),aes(x=repeat_to_age[name]/1e6,y=rmsk_table_agg[name,]$count,label = name, color = repeat_to_family[name],size = ifelse(name %in% bigfamilies$name,0.1*log10(rmsk_table_agg[name,]$count),0.4),shape = ifelse(name %in% bigfamilies$name,16,4),))+
+    labs(title = "", x = "Age (Myrs)", y = "TE instance count")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    scale_color_manual(name = "Family",values = family_palette)+ scale_y_continuous(limits = c(NA,NA))+
+   geom_point(alpha = 0.5, aes())+
+    scale_shape_identity() +
+    scale_size("Size (log10)", range = c(0,2))+
+    theme(legend.position = "bottom", plot.title = element_blank()) + #theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    
+    #geom_smooth(method = "lm",se=F,lwd=0.5)+
+    geom_smooth(data=bigfamilies, aes(x=repeat_to_age[name]/1e6,y=rmsk_table_agg[name,]$count), method = "lm",se=F,lwd=1)+guides(color = FALSE)#+coord_cartesian(ylim = c())
+
+#bigfamilies <- summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)) %>% mutate( instance_count = rmsk_table_agg[name,]$count) %>% ungroup() %>% slice_max(instance_count, prop = 0.9)
+f4_s2_d <- ggplot(tdata,aes(x=repeat_to_age[name]/1e6,y=(rmsk_table_agg[name,]$length),label = name, color = repeat_to_family[name],shape = bigfam))+
+    labs(title = "", x = "Age (Myrs)", y = "TE length bp")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    scale_color_manual(name = "Family",values = family_palette)+ scale_y_continuous(limits = c(NA,NA))+
+   geom_point(alpha = 0.5, aes())+
+    scale_shape_identity() +
+    #scale_size("Size (log10)", range = c(0,2))+
+    theme(legend.position = "bottom", plot.title = element_blank()) + #theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    
+    #geom_smooth(method = "lm",se=F,lwd=0.5)+
+    geom_smooth(data=bigfamilies, aes(x=repeat_to_age[name]/1e6,y=(rmsk_table_agg[name,]$length), shape = NULL), method = "lm",se=F,lwd=1)#+coord_cartesian(ylim = c())
+
+f4_s2_d
+
+#Other Set
+
+
+  cfams <- c("ERVL","ERVK","ERV1","TcMar-Tigger","CR1")
+  bigfamilies <- summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)) %>% mutate( instance_count = rmsk_table_agg[name,]$count) %>% ungroup() %>% slice_max(instance_count, prop = 0.9)
+ggplot(summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)),aes(x=repeat_to_age[name]/1e6,y=log10(rmsk_table_agg[name,]$count),label = name, color = repeat_to_family[name],size = ifelse(name %in% bigfamilies$name,0.1*log10(rmsk_table_agg[name,]$count),0.4),shape = ifelse(name %in% bigfamilies$name,16,4),))+
+    labs(title = "", x = "Age (Myrs)", y = "Log10(TE instance count)")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    scale_color_manual(name = "Family",values = family_palette)+ scale_y_continuous(limits = c(NA,NA))+
+   geom_point(alpha = 0.5, aes())+
+    scale_shape_identity() +
+    scale_size("Size (log10)", range = c(0,2))+
+    theme(legend.position = "bottom", plot.title = element_blank()) + #theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    
+    #geom_smooth(method = "lm",se=F,lwd=0.5)+
+    geom_smooth(data=bigfamilies, aes(x=repeat_to_age[name]/1e6,y=log10(rmsk_table_agg[name,]$count)), method = "lm",se=F,lwd=1)+guides(color = FALSE)#+coord_cartesian(ylim = c())
+
+ggplot(summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)),aes(x=repeat_to_age[name]/1e6,y=rmsk_table_agg[name,]$count,label = name, color = repeat_to_family[name],size = ifelse(name %in% bigfamilies$name,0.1*log10(rmsk_table_agg[name,]$count),0.4),shape = ifelse(name %in% bigfamilies$name,16,4),))+
+    labs(title = "", x = "Age (Myrs)", y = "Log10(TE instance count)")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    scale_color_manual(name = "Family",values = family_palette)+ scale_y_continuous(limits = c(NA,NA))+
+   geom_point(alpha = 0.5, aes())+
+    scale_shape_identity() +
+    scale_size("Size (log10)", range = c(0,2))+
+    theme(legend.position = "bottom", plot.title = element_blank()) + #theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    
+    #geom_smooth(method = "lm",se=F,lwd=0.5)+
+    geom_smooth(data=bigfamilies, aes(x=repeat_to_age[name]/1e6,y=rmsk_table_agg[name,]$count), method = "lm",se=F,lwd=1)+guides(color = FALSE)#+coord_cartesian(ylim = c())
+
+bigfamilies <- summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)) %>% mutate( instance_count = rmsk_table_agg[name,]$count) %>% ungroup() %>% slice_max(instance_count, prop = 0.9)
+ggplot(summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)),aes(x=repeat_to_age[name]/1e6,y=(rmsk_table_agg[name,]$length),label = name, color = repeat_to_family[name],size = ifelse(name %in% bigfamilies$name,0.1*log10(rmsk_table_agg[name,]$count),0.4),shape = ifelse(name %in% bigfamilies$name,16,4),))+
+    labs(title = "", x = "Age (Myrs)", y = "TE length bp")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    scale_color_manual(name = "Family",values = family_palette)+ scale_y_continuous(limits = c(NA,NA))+
+   geom_point(alpha = 0.5, aes())+
+    scale_shape_identity() +
+    scale_size("Size (log10)", range = c(0,2))+
+    theme(legend.position = "bottom", plot.title = element_blank()) + #theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    
+    #geom_smooth(method = "lm",se=F,lwd=0.5)+
+    geom_smooth(data=bigfamilies, aes(x=repeat_to_age[name]/1e6,y=(rmsk_table_agg[name,]$length)), method = "lm",se=F,lwd=1)#+coord_cartesian(ylim = c())
+    
+
+# second control set
+cfams <- c("L1","ERVL-MaLR")
+
+bigfamilies1 <- summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)) %>% mutate( instance_count = rmsk_table_agg[name,]$count) %>% ungroup() %>% slice_max(instance_count, prop = 0.9)
+
+ggplot(summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)),aes(x=log10(rmsk_table_agg[name,]$count),y=count_obs_exp_percent,label = name, color = repeat_to_family[name],shape = ifelse(name %in% bigfamilies1$name,16,4)))+
+    labs(title = "", x = "Log10(Instance count)", y = "Obs - Exp (%)")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+
+    scale_color_manual(name = "Family", values = family_palette)+ scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+    scale_shape_identity() +
+   geom_point( )+
+    
+    scale_size("Size (log10)", range = c(0,3))+ 
+    theme(legend.position = "bottom", plot.title = element_blank(), panel.margin = unit(1, "cm")) + #theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    #geom_smooth(method = "lm",se=F,lwd=0.5)+
+    geom_smooth(data=bigfamilies1, aes(x=log10(rmsk_table_agg[name,]$count),y=count_obs_exp_percent), method = "lm",se=F,lwd=1)+
+    facet_wrap(~assay)
+
+ggplot(summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)),aes(x=rmsk_table_agg[name,]$length ,y=count_obs_exp_percent,label = name, color = repeat_to_family[name],shape = ifelse(name %in% bigfamilies1$name,16,4)))+
+    labs(title = "", x = "Length (bp)", y = "Obs - Exp (%)")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+
+    scale_color_manual(name = "Family", values = family_palette)+ scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+    scale_shape_identity() +
+   geom_point( )+
+    
+    scale_size("Size (log10)", range = c(0,3))+ 
+    theme(legend.position = "bottom", plot.title = element_blank(), panel.margin = unit(1, "cm")) + #theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    #geom_smooth(method = "lm",se=F,lwd=0.5)+
+    geom_smooth(data=bigfamilies1, aes(x=rmsk_table_agg[name,]$length,y=count_obs_exp_percent), method = "lm",se=F,lwd=1)+
+    facet_wrap(~assay)
+
+ggplot(summarise(group_by(filter(clean_te_df,family %in% cfams),name,assay),count_obs_exp_percent = mean(count_obs_exp_percent)),aes(x=rmsk_table_agg[name,]$count,y=count_obs_exp_percent,label = name, color = repeat_to_family[name],shape = ifelse(name %in% bigfamilies1$name,16,4)))+
+    labs(title = "", x = "Instance count", y = "Obs - Exp (%)")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+
+    scale_color_manual(name = "Family", values = family_palette)+ scale_y_continuous(limits = c(NA,NA),labels = scales::percent)+
+    scale_shape_identity() +
+   geom_point( )+
+    
+    scale_size("Size (log10)", range = c(0,3))+ 
+    theme(legend.position = "bottom", plot.title = element_blank(), panel.margin = unit(1, "cm")) + #theme(panel.background = element_rect(fill = "white", colour = "grey50"))+
+    #theme(legend.position = ifelse(length(cell_palette)>30,"none","right"))+
+  #geom_label()+
+   #geom_text_repel()+
+    geom_hline(yintercept = 0, lwd = 1, color = "black")+
+    #geom_smooth(method = "lm",se=F,lwd=0.5)+
+    geom_smooth(data=bigfamilies1, aes(x=rmsk_table_agg[name,]$count,y=count_obs_exp_percent), method = "lm",se=F,lwd=1)+
+    facet_wrap(~assay)
+
+
+```
+
+### Age trends
+
+Group TEs into old or young based on relative age within the family
+
+```{r age_setup_map}
+TE_list <- c("Alu", "ERV1", "ERVK", "ERVL", "ERVL-MaLR", "hAT-Charlie", "L1", "L2", "MIR", "Other", "SVA", "TcMar-Tigger")
+
+TE_age_rank <- clean_te_df %>% mutate(mappa = mappability_table[match(name,mappability_table$name),]$prop) %>% mutate(age=repeat_to_age[name], ageorder = rank(age)) %>% select(name,family, age) %>% group_by(name, family) %>% dplyr::summarise(age = mean(age)) %>% group_by(family) %>% mutate(ageorder = rank(age), maxorder= max(ageorder), ageperc = ageorder/maxorder, agegroup = ifelse(ageperc>0.5,"Old","Young")) %>% column_to_rownames("name")
+
+agegrouped <- clean_te_df %>% mutate(mappa = mappability_table[match(name,mappability_table$name),]$prop) %>% filter(tfamily %in% TE_list, mappa>0.85) %>% group_by(name, assay, tfamily) %>% filter() %>% summarise(count_obs_exp_percent = mean(count_obs_exp_percent), ) %>% mutate(distance= abs(count_obs_exp_percent), agegroup = TE_age_rank[name,]$agegroup) %>% ungroup()
+agegrouped_sub <- filter(agegrouped,agegroup!="mid", tfamily %in% c("Alu", "L2", "MIR", "L1", "ERVL-MaLR"))
+agegrouped_nooutlier <- agegrouped_sub
+
+
+agegrouped_all <- clean_te_df %>% mutate(mappa = mappability_table[match(name,mappability_table$name),]$prop) %>% filter(mappa>0.85) %>% group_by(name, assay, tfamily) %>% filter() %>% summarise(count_obs_exp_percent = mean(count_obs_exp_percent), ) %>% mutate(distance= abs(count_obs_exp_percent), agegroup = TE_age_rank[name,]$agegroup) %>% ungroup()
+```
+
+#### Age trend plots
+
+```{r fig4_age_boxplot_map, fig.width=8, fig.height=6}
+
+ylim1 = tapply(agegrouped_nooutlier$distance,list(agegrouped_nooutlier$assay, agegrouped_nooutlier$tfamily),function (x) boxplot.stats(x)[['stats']][c(1,5)])
+
+ylim2 = c(min(unlist(ylim1)),max(unlist(ylim1)))
+
+#compare_means( distance ~ agegroup ,filter(agegrouped,agegroup!="mid"), group.by = c("assay","tfamily"),p.adjust.method = "bonferroni")
+pval_element_age <- compare_means(formula = distance ~ agegroup,data = filter(agegrouped_all,agegroup!="mid"), group.by = c("assay","tfamily"), p.adjust.method="bonferroni", label = "p.signif") %>%
+ mutate(y.position = mean(agegrouped_nooutlier$distance), cell_type = group2, p.signif.adj =symnum(p.adj, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1), symbols = c("****", "***", "**", "*", "ns")))
+
+f4_c2 <-ggplot(agegrouped_nooutlier, aes(x= factor(agegroup, level = c('Young' ,'Old')), y = distance)) + geom_boxplot(position = "dodge",na.rm = TRUE, aes(color = tfamily))+
+  facet_grid(assay~tfamily)+stat_summary(data = agegrouped_nooutlier, fun=mean, geom="line",lwd=1, aes(group=1, color = tfamily), color = "black")+stat_summary(data = agegrouped_nooutlier,fun=mean, geom="point",aes( color = tfamily),color = "black")+
+  labs(x = "TE Age group", y = "Absolute enrichement")+
+  scale_color_manual(name = "Family",values = family_palette, limits = force)+
+  scale_y_continuous(n.breaks = 3,labels = scales::percent)+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+theme(legend.key.size = unit(0.5,"lines"))+
+  coord_cartesian(ylim = ylim2*1.1)+
+      geom_text(data = subset(pval_element_age, tfamily %in% unique(agegrouped_nooutlier$tfamily)), aes( label = ifelse(p.signif.adj!="ns",p.signif.adj,"")),x= 1.5, y = ylim2[2]*0.95, size=7, vjust = "top", color="black")
+
+f4_c2
+
+#pval_element_age
+#subset(pval_element_age, tfamily %in% unique(agegrouped_nooutlier$tfamily))
+```
+
+
+
+
+```{r, fig.height=2, fig.width=8 }
+# version 2: all
+# Uses more families
+
+trend_p_table_a <- compare_means(formula = distance ~ agegroup,data = filter(agegrouped_all,agegroup!="mid"), group.by = c("assay","tfamily"), p.adjust.method="bonferroni", label = "p.signif")
+
+trend_table_a <- dcast(agegrouped_all, assay + tfamily  ~ agegroup, mean, value.var = "distance") %>% inner_join(trend_p_table_a, by = c("assay", "tfamily")) %>% mutate(dif = abs(Old-Young),one = abs(Old-Young)<(Young*1), two =(p.adj>0.05), trend = ifelse((abs(Old-Young)<(Young*1) & p.adj>0.05),"No change",ifelse(Old>Young,"Diverge","Converge")))
+
+#trend_order = trend_table %>% group_by(tfamily) %>% summarise(coun)
+
+count(trend_table_a, tfamily, trend)
+
+trend_order_a <- dcast(trend_table_a, tfamily~trend)
+
+f4_d_all <- ggplot(trend_table_a, aes(x=trend, fill= tfamily))+
+  labs( y = "Assay")+
+  scale_fill_manual(name="Family", values = family_palette)+
+  scale_y_continuous(n.breaks = 10)+
+  geom_bar(width = 0.75, color = "black")+#position = "fill", 
+  theme_classic2()+
+  theme(axis.title.y = element_blank(), legend.position = "bottom")+
+  theme(legend.position='bottom',legend.key.size = unit(0.5,"lines"))+
+  guides(fill = guide_legend(nrow = 2, byrow = TRUE))+
+  coord_flip()#+coord_polar("y")
+f4_d_all
+
+
+f4_d2_all <- ggplot(trend_table_a, aes(x=tfamily, fill= trend))+
+  labs( y = "Assay", x ="TE Family")+
+  scale_fill_manual(name="Trend", values = c("Converge"="red3", "No change"="grey50", "Diverge"="steelblue1" ))+
+  #scale_y_continuous(n.breaks = 10)+
+  geom_bar(width = 0.75, color = "black")+#position = "fill", 
+  theme_classic2()+
+  theme( legend.position = "bottom")+
+  theme(legend.position='right',legend.key.size = unit(0.5,"lines"), axis.text.x = element_text(angle = 30, vjust=1,hjust = 1))#+
+  #guides(fill = guide_legend(nrow = 1, byrow = TRUE))#+
+  #coord_flip()#+coord_polar("y")
+f4_d2_all
+
+f4_d22_all <- ggplot(trend_table_a, aes(x=reorder(tfamily,-(trend_order_a[match(trend_table_a$tfamily,trend_order_a$tfamily ),]$Diverge*10+ trend_order_a[match(trend_table_a$tfamily,trend_order_a$tfamily ),]$`No change`)), fill= trend))+
+  labs( y = "Assay", x ="TE Family")+
+  scale_fill_manual(name="Trend", values = c("Converge"="red3", "No change"="grey50", "Diverge"="steelblue1" ))+
+  #scale_y_continuous(n.breaks = 10)+
+  geom_bar(width = 0.75, color = "black")+#position = "fill", 
+  theme_classic2()+
+  theme( legend.position = "bottom")+
+  theme(legend.position='right',legend.key.size = unit(0.5,"lines"), axis.text.x = element_text(angle = 30, vjust=1,hjust = 1))#+
+f4_d22_all
+
+
+f4_d3_all <- ggplot(trend_table_a, aes(x=tfamily, y = assay, fill= trend))+
+  labs( y = "Assay", x ="TE Family")+
+  scale_fill_manual(name="Trend", values = c("Converge"="red3", "No change"="grey50", "Diverge"="steelblue1" ))+
+  scale_y_discrete(limits=rev)+
+  geom_tile(color = "white")+
+  theme_classic2()+
+  theme( legend.position = "bottom")+
+  theme(legend.position='right',legend.key.size = unit(0.5,"lines"), axis.text.x = element_text(angle = 30, vjust=1,hjust = 1))#+
+f4_d3_all
+
+
+
+
+print_DT(trend_table_a)
+filter(trend_table_a, p.adj<1)
+subset(trend_table_a, tfamily %in% unique(agegrouped_nooutlier$tfamily)) %>% select(assay, tfamily, p.adj,p.signif,p) %>% arrange(assay, tfamily)
+subset(pval_element_age, tfamily %in% unique(agegrouped_nooutlier$tfamily))%>% select(assay, tfamily, p.adj,p.signif,p) %>% arrange(assay, tfamily)
+
+```
+
+Add trends labels to boxplots
+
+```{r fig4_age_boxplot2_map, fig.width=8, fig.height=6}
+#used to be trend_table
+trendlabels <- trend_table_a %>% filter(tfamily %in% c("Alu", "L2", "MIR", "L1", "ERVL-MaLR")) %>% select(assay,tfamily,p.adj,p.format,p.signif,trend) %>% mutate(arrow=ifelse(trend=="Converge","V ",ifelse(trend=="Diverge","^ ","X ")),
+                                                                                                                                                                arrow2 = ifelse(trend=="Converge","⇘",ifelse(trend=="Diverge","⇗"," "))) 
+trendlabels
+
+f4_c3 <- f4_c2 +
+  geom_text(data = trendlabels, aes(label=arrow), 
+            x = Inf, y = Inf, , vjust = "inward", hjust = "inward",size=4,#hjust=1, vjust=1,
+            inherit.aes = FALSE)#+ ggplot2::annotate(geom = "text", x = 2, y = ylim2[2], label = 1:25)
+
+f4_c3
+
+f4_c4 <- f4_c2 + new_scale_color()+ geom_point(data = trendlabels, aes(color=trend), x = Inf, y= Inf,size=6, shape = 15,inherit.aes = FALSE)+scale_color_manual(name="Trend", values = c("Converge"="red3", "No change"="grey50", "Diverge"="steelblue1" ))
+
+f4_c4
+```
+
+
+## Composed Figure 3 
+
+```{r ,fig.width=13, fig.height=10}
+((f4_b / f4_a) | (f4_c4 / f4_d3_all)+ plot_layout(heights = unit(c(0.5,0.2), c('npc',"null")))) + plot_annotation(tag_levels = 'A')
+```
+
+### supplemental
+
+```{r,fig.width=13, fig.height=10}
+#all 6 marks
+f4_s1_b2+f4_s1_a+f4_s1_c+ plot_annotation(tag_levels = 'A')
+
+f4_s1_b2+f4_s1_a+f4_s1_c+ plot_annotation(tag_levels = 'A')
+
+(f4_s1_b2+f4_s1_c)/(f4_s1_a+ plot_spacer())+ plot_annotation(tag_levels = 'A')
+
+#Fold change
+#f4_s1_c_fc+f4_s1_c2_fc+ f4_s1_c3_fc+ plot_annotation(tag_levels = 'A')
+#(f4_s1_c_fc+f4_s1_c2_fc)/(f4_s1_c3_fc+ f4_s1_c4_fc)+ plot_annotation(tag_levels = 'A')
+
+#cofounders
+
+#f4_s2_c + f4_s2_a + f4_s2_b + plot_annotation(tag_levels = 'A')
+(f4_s2_a+f4_s2_c)/(f4_s2_b+ f4_s2_d)+ plot_annotation(tag_levels = 'A')
+
+```
+
+
+# Figure 4: Cell types 
+
+## Data & functions prep
+
+```{r}
+cell_list_high <- c("mesoderm-derived structure","colon","lymphocyte of B lineage","brain","endoderm-derived structure")
+```
+
+```{r}
+
+plot_picked_cells <- function(cfam, cassay){
+
+cell_list <- filter(clean_te_df, family!="Simple_repeat", tfamily %in% cfam, assay %in% cassay) %>% group_by(tfamily, assay, cell_type) %>% summarise(n = n(),instances = sum(count), count = sum(count_obs_exp_percent), avg = mean(count_obs_exp_percent), med = median(count_obs_exp_percent), count_prop_sum = sum(count_prop), rand_prop = sum(rand_count/rand_read_count)) %>% slice_max(med, n = 6) %>% pull(cell_type)#c("Blood","Brain","Bone Marrow")
+pval_df <- list()
+k=1
+ctitle = paste0("Enrichment of ", cfam," Family in ",cassay," samples")
+
+valid_types = filter(te_counts_table,family == cfam,assay == cassay ) %>% group_by(sample_name, cell_type, family) %>% summarise(n = n()) %>% group_by(cell_type) %>% summarise(n = n()) %>% filter(n>1) %>% pull(cell_type)
+      this_data <- filter(te_counts_table,family == cfam,assay == cassay, cell_type %in% valid_types ) %>% group_by(sample_name, cell_type, family) %>% summarise(count_obs_exp_percent = sum(count_obs_exp_percent)) %>% ungroup()
+
+      cell_list_rest <- filter(te_counts_table,family == cfam,assay == cassay, cell_type %in% valid_types ) %>% group_by(sample_name, cell_type, cell_full,family) %>% summarise( count_obs_exp_percent = sum(count_obs_exp_percent))  %>% filter(cell_type %in% cell_list_high) %>% group_by(cell_type) %>% summarise(n = n(),c = n_distinct(cell_full) ) %>% filter(n>1, c>1) %>% pull(cell_type)
+      
+  ret_list <- list()
+  ret_plot <- ggplot()
+  if (nrow(this_data)>0)
+    {
+    this_pval <- compare_means(count_obs_exp_percent~cell_type,this_data, method = "t.test", ref.group = ".all.")
+    
+    this_aggregate <- this_data %>% group_by(cell_type) %>% summarise(mean = mean(count_obs_exp_percent), median = median(count_obs_exp_percent), variance = var(count_obs_exp_percent), min = min(count_obs_exp_percent), max = max(count_obs_exp_percent), n = n())
+    
+
+
+pval_element <- compare_means( count_obs_exp_percent ~ cell_type ,this_data, p.adjust.method = "bonferroni", ref.group = ".all.", alternative = "greater")%>%
+ mutate(y.position = mean(this_data$count_obs_exp_percent), cell_type = group2, p.signif.adj =symnum(p.adj, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1), symbols = c("****", "***", "**", "*", "ns")))
+
+pval_df <- mutate(pval_element, family = cfam, assay = cassay)
+this_aggregate <- left_join(this_aggregate,pval_df, by = c("cell_type"="group2"))
+
+ret_list[[1]] <- pval_df
+ret_list[[2]] <- this_aggregate
+
+    cell_order <- levels(reorder(this_aggregate$cell_type, -this_aggregate$mean))
+#print(pval_element)
+
+
+ret_plot <- ggplot(this_data,aes(x=reorder(cell_type, -count_obs_exp_percent),y=count_obs_exp_percent, fill=cell_type))+
+    labs(title = ctitle, x="Cell type", y= "Observed-Expected (%)")+
+    theme_classic2(base_size =15)+
+    #theme(axis.text.x = element_blank())+#base_size =9
+    scale_fill_manual(values = cell_palette)+
+    scale_x_discrete(labels = strlim)+
+    scale_y_continuous(labels = scales::percent)+
+    geom_boxplot()+
+    #geom_jitter(height = 0, width = 0.1, alpha = 0.5)+
+    theme(legend.position = "none",axis.title.x = element_blank(), axis.text.x = element_text(angle = 30, vjust=1,hjust = 1, face = ifelse(cell_order %in% cell_list_rest, "bold","plain")))+
+    #stat_compare_means( method = "wilcox.test",method.args = list(alternative = "greater"), ref.group = ".all.", hide.ns = TRUE, p.adjust.method = "bonferroni", label = "p.format") +
+    stat_summary(
+      fun.data = stat_box_data,
+      geom = "text",
+      hjust = 1,
+      vjust = 0.9#,
+      #size = 2
+    ) +
+    geom_hline(aes(yintercept = mean(count_obs_exp_percent)),linetype = 2 )+
+      geom_text(data = pval_element, aes(x= cell_type, y=Inf, label = ifelse(p.signif.adj!="ns",p.signif.adj,"")), vjust = "top", size = 7)
+
+  }
+  ret_list[[3]] <- ret_plot
+    return(ret_list)  
+}
+
+
+
+plot_picked_cells_subcell <- function(cfam, cassay){
+
+cell_list <- filter(clean_te_df, family!="Simple_repeat", tfamily %in% cfam, assay %in% cassay) %>% group_by(tfamily, assay, cell_type) %>% summarise(n = n(),instances = sum(count), count = sum(count_obs_exp_percent), avg = mean(count_obs_exp_percent), med = median(count_obs_exp_percent), count_prop_sum = sum(count_prop), rand_prop = sum(rand_count/rand_read_count)) %>% slice_max(med, n = 6) %>% pull(cell_type)
+pval_df <- list()
+k=1
+ctitle = paste0("Enrichment of ", cfam," Family in ",cassay," samples")
+#part 2
+valid_types = filter(te_counts_table,family == cfam,assay == cassay ) %>% group_by(sample_name, cell_type, family) %>% summarise(n = n()) %>% group_by(cell_type) %>% summarise(n = n()) %>% filter(n>1) %>% pull(cell_type)
+
+      cell_list_rest <- filter(te_counts_table,family == cfam,assay == cassay, cell_type %in% valid_types ) %>% group_by(sample_name, cell_type, cell_full,family) %>% summarise( count_obs_exp_percent = sum(count_obs_exp_percent))  %>% filter(cell_type %in% cell_list_high) %>% group_by(cell_type) %>% summarise(n = n(),c = n_distinct(cell_full) ) %>% filter(n>1, c>1) %>% pull(cell_type)
+      
+  ret_plot <- ggplot()
+  
+  valid_types <- cell_list_rest
+        this_data <- filter(te_counts_table,family == cfam,assay == cassay, cell_type %in% valid_types ) %>% group_by(sample_name, batch, cell_full, cell_type, family) %>% summarise(count_obs_exp_percent = sum(count_obs_exp_percent)) %>% ungroup()
+  
+      #cat(paste0("\n\n",nrow(this_data)," datapoints (Mean TE family enrichment in cell type)\n"))
+    if (nrow(this_data)>0)
+      {
+      this_aggregate <- this_data %>% group_by(cell_type) %>% summarise(mean = mean(count_obs_exp_percent), median = median(count_obs_exp_percent), variance = var(count_obs_exp_percent), min = min(count_obs_exp_percent), max = max(count_obs_exp_percent), n = n())
+      cell_order <- levels(reorder(this_aggregate$cell_type, -this_aggregate$mean))
+
+      this_data$cell_type_f = factor(this_data$cell_type, levels=cell_order)
+
+      ctitle = paste0("Enrichment of ", cfam," Family in ",cassay," samples")
+
+      ret_plot <- ggplot(this_data,aes(x=reorder(cell_full, -count_obs_exp_percent),y=count_obs_exp_percent, fill=cell_type))+
+      labs(title = ctitle, x="Cell type", y= "Observed-Expected (%)")+
+      theme_classic2(base_size =15)+
+      scale_fill_manual(values = cell_palette)+
+      scale_x_discrete(labels = strlim)+
+      scale_y_continuous(labels = scales::percent)+
+      geom_boxplot()+#outlier.shape = NA
+      #geom_jitter(aes(shape = batch),height = 0, width = 0.1, alpha = 0.7)+
+      theme(panel.background = element_rect(fill = "white", colour = "black"), axis.title.x = element_blank(),legend.position = "bottom", axis.text.x = element_text( angle = 30, vjust=1,hjust = 1))+
+
+      stat_summary(
+        fun.data = stat_box_data,
+        geom = "text",
+        hjust = 1,
+        vjust = 0.5,
+        size = 3
+      ) +guides(fill = "none")+
+        facet_grid(.~cell_type_f, space="free_x", scales="free")
+    }
+    return(ret_plot)  
+}
+
+
+
+```
+
+
+## Select plots
+
+Plots shown in figures
+
+```{r, fig.width=12, fig.height=5}
+
+
+f3_2_a1_2 <- plot_picked_cells("Alu", "H3K36me3")[[3]]
+f3_2_a1_2
+
+f3_2_a3 <- plot_picked_cells_subcell("Alu", "H3K36me3")
+f3_2_a3
+
+f3_2_b1_2 <- plot_picked_cells("L1", "H3K9me3")[[3]]
+f3_2_b1_2
+
+f3_2_b3 <- plot_picked_cells_subcell("L1", "H3K9me3")
+f3_2_b3
+```
+
+
+## Iterate through plots {.tabset .tabset-fade .tabset-pills}
+
+
+Iteration of valid combinations
+
+
+```{r iterate_cell_plots, fig.width=12, fig.height=5, results="asis"}
+cfam_list <- clean_te_df %>% filter(family %notin% c("Simple_repeat","Low_complexity", "Satellite")) %>% pull(tfamily) %>% unique()#c("Alu","L2","L1","MIR","ERVL","ERVL-MaLR","centr")
+cassay_list <- c("H3K36me3","H3K9me3","H3K4me1","H3K4me3","H3K27me3","H3K27ac")
+pval_df <- list()
+summtable_df <- list()
+k = 1
+cat("\n\n")
+for (cfam in cfam_list) {
+  cat(paste0("### ",cfam, "{.tabset .tabset-fade .tabset-pills}"))
+  cat("\n\n")
+  for (cassay in cassay_list) {
+    cat("\n\n")
+    cat(paste0("#### ",cassay))
+    cat("\n\n")
+    
+    p_res <- plot_picked_cells(cfam, cassay)
+    
+    
+    pval_df[[k]] <- p_res[[1]]
+    summtable_df[[k]] <- p_res[[2]]
+    print(p_res[[3]])
+    cat("\n\n")
+    #plot_picked_cells_subcell(cfam, cassay)
+    #cat("\n\n")
+    k = k+1
+  }
+  cat("\n\n")
+}
+cat("\n\n")
+
+
+pval_df <- select(bind_rows(pval_df),assay, family,everything())
+summtable_df <- bind_rows(summtable_df)
+
+summtable_df <- summtable_df %>% mutate(median_perc = median*100)
+```
+
+
+## Summary plots
+
+```{r fig.width=20, fig.height=20}
+
+#breaks = c(1, 5e-2, 1e-3, 1e-5, 1e-10, 1e-20)
+ggplot(complete(pval_df, family, cell_type, assay) , aes(x=cell_type, y=family, fill=p.adj, label = ifelse(p.signif.adj=="ns","",p.signif.adj)))+
+  labs(title="", x="Cell type", y= "Family")+
+  theme_classic2()+scale_fill_viridis_b(option="A", direction = -1)+
+  geom_tile(color = "white",lwd = 1, linetype = 1)+facet_wrap(assay~., ncol = 1)+theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 30, vjust=1,hjust = 1), panel.background = element_rect(fill="gray"))+geom_text(color="black",size=2)+coord_fixed()
+
+ggplot(complete(pval_df, family, cell_type, assay) , aes(x=cell_type, y=family, fill=p.adj, label = ifelse(p.signif.adj=="ns","",p.signif.adj)))+
+  labs(title="", x="Cell type", y= "Family")+
+  theme_classic2()+scale_fill_viridis_c(option="A", direction = -1)+
+  geom_tile(color = "white",lwd = 1, linetype = 1)+facet_wrap(assay~., ncol = 1)+theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 30, vjust=1,hjust = 1), panel.background = element_rect(fill="gray"))+geom_text(color="black",size=2)+coord_fixed()
+
+
+
+```
+
+
+
+median percentage
+
+
+```{r fig.width=20, fig.height=20}
+
+
+quant09 <- quantile(summtable_df$median_perc,c(0.9))
+
+
+f3_summ_square2 <- ggplot(complete(summtable_df, family, cell_type, assay), aes(x=cell_type, y=family, fill=median_perc, label = ifelse(p.signif.adj=="ns","","*")))+
+  labs(title="", x="Cell type", y= "Family")+
+  theme_classic2()+scale_fill_distiller(name = "median\nobs-exp(%)",palette = "Reds", limits = c(0, quant09), oob=oob_squish)+
+  geom_tile(color = "white",lwd = 1, linetype = 1)+facet_wrap(.~assay, ncol = 1)+theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 45, vjust=1,hjust = 1), panel.background = element_rect(fill="gray"))+geom_text(color="black",size=7)+coord_fixed()
+
+f3_summ_square2
+
+
+f3_summ <- ggplot(complete(summtable_df, family, cell_type, assay), aes(x=cell_type, y=family, fill=median_perc, label = ifelse(p.signif.adj=="ns","",p.signif.adj)))+
+  labs(title="", x="Cell type", y= "Family")+
+  theme_classic2()+scale_fill_distiller(name = "median\nobs-exp(%)",palette = "Reds", limits = c(0, quant09), oob=oob_squish)+
+  geom_tile(color = "white",lwd = 1, linetype = 1)+facet_wrap(.~assay, ncol = 1)+theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 45, vjust=1,hjust = 1), panel.background = element_rect(fill="gray"))+geom_text(color="black",size=5)
+
+f3_summ
+
+```
+
+
+```{r, results="asis"}
+
+print("\n\n")
+summtable_df %>% group_by(cell_type, family, assay) %>% summarise(n = sum(p.adj<0.05)) %>% filter(n>0)
+
+summtable_signif <- summtable_df %>% group_by(family, assay) %>% summarise(n = sum(p.adj<0.05)) %>% ungroup() %>% filter(n>0) %>% arrange(desc(n))
+
+print_DT(summtable_signif)
+print("\n\n")
+
+print(mean(summtable_signif$n))
+print("\n\n")
+```
+
+```{r}
+ggplot(complete(summtable_signif, family,  assay), aes(y=n, x=family, fill=n, label = n))+
+  labs(title="", y="Cell type", x= "Family")+
+  theme_classic2()+scale_fill_distiller(name = "median\nobs-exp",palette = "Reds", oob=oob_squish)+
+  geom_col()+facet_wrap(assay~., ncol = 1)+theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 45, vjust=1,hjust = 1), panel.background = element_rect(fill="gray"))+geom_text(color="black",size=2)
+```
+
+
+## Summary assembled
+
+```{r fig.width=20, fig.height=25}
+
+f3_2_b3/f3_summ+plot_layout(heights = c(1,8))+plot_annotation(tag_levels = 'A')
+
+f3_2_b3/f3_summ_square2+plot_layout(heights = c(1,8))+plot_annotation(tag_levels = 'A')
+
+```
+
+
+
+## Summary table
+
+```{r, results="asis"}
+      summary_te_data <- filter(te_counts_table) %>% group_by(sample_name, cell_type, family, assay) %>% summarise(count_obs_exp_percent = sum(count_obs_exp_percent)) %>% ungroup() #Add up all subfamilies within sample
+
+    summary_te_data_summary <- summary_te_data %>% group_by(assay, family, cell_type) %>% summarise(mean = mean(count_obs_exp_percent), median = median(count_obs_exp_percent), sd = sd(count_obs_exp_percent), min = min(count_obs_exp_percent), max = max(count_obs_exp_percent), n = n() ) %>%  mutate(rank = rank(-mean, ties.method = "first"))
+    
+print("\n\n")
+print_DT(summary_te_data_summary)
+
+write.csv(summary_te_data_summary,"PSTable4_enriched_TE_summary.csv", row.names = T, col.names = T)
+    
+
+#full map version
+print("\n\nFull data")
+
+print("\n\n")
+summary_te_data2 <- clean_te_df %>% ungroup() %>% filter(family!="Simple_repeat") %>% group_by(sample_name, cell_type, family, assay) %>% summarise(count_obs_exp_percent = sum(count_obs_exp_percent)) %>% ungroup() #Add up all subfamilies within sample
+
+    summary_te_data_summary2 <- summary_te_data2 %>% group_by(assay, family, cell_type) %>% summarise(mean = mean(count_obs_exp_percent), median = median(count_obs_exp_percent), sd = sd(count_obs_exp_percent), min = min(count_obs_exp_percent), max = max(count_obs_exp_percent), n = n() ) %>%  mutate(rank = rank(-mean, ties.method = "first"))
+    
+print("\n\n")
+print_DT(summary_te_data_summary2)
+
+write.csv(summary_te_data_summary2,"PStable5_all_TE_summary.csv", row.names = T, col.names = T)
+```
+
+
+
+## Health Plots
+
+
+### Summary
+
+
+```{r, fig.width=16, fig.height=20, results="asis"}
+
+#%>% group_by()
+
+health_status_count <-  te_counts_table %>% mutate(family = fam_to_tfam[family]) %>%  group_by( assay,  cell_type, proxy_health=a_samp_info[sample_name,]$proxy_health, family) %>% summarise(n = n()) %>% group_by( assay,  cell_type, family) %>% summarise(n2 = n(), n_d = n_distinct(proxy_health), samp_sum = sum(n)) %>% ungroup() %>% mutate(proxy_name = paste0(assay,"_",cell_type,"_", family))
+
+health_status_keep <- health_status_count %>% filter(n_d>1 & samp_sum>=1) %>% pull(proxy_name)
+
+df <- te_counts_table %>% mutate(family = fam_to_tfam[family], proxy_name = paste0(assay,"_",cell_type,"_", family)) %>% filter(proxy_name %in% health_status_keep) %>% group_by(sample_name, batch, assay,  cell_type, proxy_health=a_samp_info[sample_name,]$proxy_health, family) %>% summarise(count_obs_exp_percent = sum(count_obs_exp_percent), count = sum(count), expected_count = sum(expected_count)) %>% ungroup() %>% mutate(count_fold_change = count/expected_count) 
+
+
+
+health_pvals <- compare_means(c(count_obs_exp_percent,count_fold_change)~proxy_health,df, group.by = c("family", "cell_type", "assay"), method = "kruskal.test", p.adjust.method = "bonferroni") %>%
+ mutate(p.signif.adj =symnum(p.adj, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1), symbols = c("****", "***", "**", "*", "ns"))) %>% group_by(family, cell_type, assay, metric=.y.) %>% summarise(mean_padj = mean(p.adj), min_padj=min(p.adj), mean_p=mean(p), n= n(), differences = as.factor(sum(p.signif.adj!="ns"))) %>% mutate(family = as.factor(family), assay = as.factor(assay), cell_type = as.factor(cell_type), differences2 = ifelse(as.character(differences)=="0",F,T))%>% ungroup() %>% complete(family,cell_type, assay, metric) 
+#, fill = list(differences = NA)
+#health_pvals
+
+
+
+
+#expand(health_pvals, family, assay, cell_type) %>% right_join(health_pvals)
+#expand(health_pvals, family, assay, cell_type) %>% anti_join(health_pvals)
+
+top_health_dif <- health_pvals %>% group_by(cell_type) %>% summarise(differences = sum(as.numeric(as.character(differences)))) %>%slice_max(order_by = differences, n = 10, with_ties =F) %>% pull(cell_type) %>% unique()
+
+top_health_dif
+
+
+#ggplot(filter(health_pvals,metric=="count_obs_exp_percent"), aes(cell_type,family, fill=-log10(mean_p), label=differences))+labs(title = "Enrichement differences between health status (pairwise)", x="TE family", y="Cell category")+geom_tile(color="white")+theme_classic2()+theme( axis.text.x = element_text(angle = 30, vjust=1,hjust = 1),panel.background=element_rect(fill="blue", colour="blue"))+ geom_text()+facet_grid(assay~.)+scale_fill_fermenter(palette = "Reds",direction = 1, na.value = 'salmon')
+
+health_dif_pal <- brewer.reds(max(length(unique(health_pvals$differences)),3))
+health_dif_pal[1] <- "#e0e0e0"#"#67a9cf"#"#f7f7f7"#"white"
+
+```
+
+
+
+#### Summary tables
+
+
+```{r, fig.width=16, fig.height=20, results="asis"}
+cat("health status count \n\n")
+print_DT(health_status_count)
+cat("\n\n")
+
+#cat("health_status_keep\n\n")
+#print(health_status_keep)
+#cat("\n\n")
+
+
+cat("DF\n\n")
+print_DT(df)
+cat("\n\n")
+```
+
+```{r, fig.width=16, fig.height=20, results="asis"}
+cat("health_pvals Used: kruskal-bonf \n\n")
+print_DT(health_pvals)
+cat("\n\n")
+
+```
+
+
+
+
+
+
+### Compiled summary
+
+```{r, fig.width=25, fig.height=20, eval=FALSE,results="asis"}
+f3_shealth_layout <- "
+AAAB
+"
+
+
+#the one
+f3_sup_health_1*theme(legend.position = "none") + f3_sup_health_3*theme(axis.text.y = element_blank(), axis.title.y = element_blank())+coord_flip()+plot_layout(design = f3_shealth_layout)+plot_annotation(tag_levels = 'A') 
+
+f3_sup_health_1+ f3_sup_health_3*theme(legend.position = "none")*theme(axis.text.y = element_blank(), axis.title.y = element_blank())+coord_flip()+plot_layout(design = f3_shealth_layout)+plot_annotation(tag_levels = 'A')+plot_layout(guides = "collect")
+
+
+f3_sup_health_2_top_fig <- f3_sup_health_2_top+facet_grid(assay~., space = "free")+coord_flip()
+f3_sup_health_2_top_fig
+
+f3_sup_health_2_top_fig2 <- f3_sup_health_2_top+facet_wrap(assay~., ncol = 1,  scales = "free_y")+coord_flip()
+f3_sup_health_2_top_fig2
+
+f3_sup_health_2_top_fig3 <- f3_sup_health_2_top+facet_grid(assay~.,   scales = "free_y")+coord_flip()
+f3_sup_health_2_top_fig3
+
+
+ggplot(filter(top_health_dif2,metric=="count_obs_exp_percent") , aes(reorder(cell_type, differences2),nodif, fill=nodif))+labs(title = "Enrichement differences between health status", x="Cell type", y="Enriched TE families")+geom_col(fill="gray90")+geom_col(aes(reorder(cell_type, differences2),differences2, fill=differences2), fill=health_dif_pal[2], alpha=0.7)+theme_classic2()+theme( axis.text.x = element_text(angle = 30, vjust=1,hjust = 1))+scale_fill_manual(name = "Differences", values = health_dif_pal, na.value = "gray")
+
+top_health_dif_melt <- melt(filter(top_health_dif2,metric=="count_obs_exp_percent"),c("cell_type","assay") ,c("nodif","differences2")) %>% mutate(Health=ifelse(variable=="nodif","No difference","Difference"), pos = value*(!(variable=="nodif")*1000)+value)
+
+ggplot(filter(health_pvals,metric=="count_obs_exp_percent") , aes(reorder(cell_type, differences2), fill=differences2))+labs(title = "Enrichement differences between health status", x="Cell type", y="Enriched TE families")+geom_bar(position = "dodge")+theme_classic2()+theme( axis.text.x = element_text(angle = 30, vjust=1,hjust = 1))+scale_fill_manual(name = "Differences", values = health_dif_pal, na.value = "gray")+facet_wrap(assay~., ncol = 1,  scales = "free_y")+coord_flip()
+
+
+f3_sup_health_2_top_fig4 <- ggplot(top_health_dif_melt , aes(reorder(cell_type, pos),value, fill=Health))+labs(title = "Enrichement differences between health status", x="Cell type", y="Enriched TE families")+geom_col(position = "dodge")+theme_classic2()+theme( axis.text.x = element_text(angle = 30, vjust=1,hjust = 1))+scale_fill_manual(name = "Health", values = c("No difference"=health_dif_pal[1], "Difference"=health_dif_pal[2]), na.value = "gray")+facet_wrap(assay~., ncol = 1,  scales = "free_y")+coord_flip()+theme(legend.position = "bottom", strip.text.x = element_text(size = 8))
+
+f3_sup_health_2_top_fig4
+
+f3_sup_health_2_top_fig5 <- ggplot(top_health_dif_melt , aes(reorder(cell_type, pos),value, fill=Health))+labs(title = "Enrichement differences between health status", x="Cell type", y="Enriched TE families")+geom_col(position = "dodge")+theme_classic2()+theme( axis.text.x = element_text(angle = 30, vjust=1,hjust = 1))+scale_fill_manual(name = "Health", values = c("No difference"=health_dif_pal[1], "Difference"=health_dif_pal[2]), na.value = "gray")+facet_grid(assay~., space = "free",  scales = "free_y")+coord_flip()+theme(legend.position = "bottom", strip.text = element_text(size = 8))
+
+f3_sup_health_2_top_fig5
+```
+
+
+
+## table of Health comparisons
+
+```{r table_health1, fig.width=16, fig.height=18}
+
+health_differenced <- unique(filter(mutate(health_pvals,triplet = paste0(cell_type,family,assay)),metric=="count_obs_exp_percent") %>% arrange(assay, cell_type, family))
+#, differences2==T
+
+ggplot(filter(health_pvals,metric=="count_obs_exp_percent"), aes(family,cell_type, fill=mean_p, label=ifelse(mean_padj<0.05,"*","" )))+labs(title = "Health difference pval", x="TE family", y="Cell category")+geom_tile(color="white",lwd = 1, linetype = 1)+theme_classic2()+scale_fill_viridis_b(name="pval",option="A", breaks = c(1,0.05, 1e-3, 1e-5, 1e-10), limits = c(1e-7 ,1),  direction = -1)+facet_wrap(assay~., ncol = 1)+theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 30, vjust=1,hjust = 1), panel.background = element_rect(fill="gray"))+geom_text(color="black")+coord_fixed()#oob = oob_squish,
+
+ggplot(filter(health_pvals,metric=="count_obs_exp_percent"), aes(family,cell_type, fill=mean_p, label=ifelse(mean_padj<0.05,"*","" )))+labs(title = "Health difference pval", x="TE family", y="Cell category")+geom_tile(color="white",lwd = 1, linetype = 1)+theme_classic2()+scale_fill_viridis_c(name="pval",option="A", direction = -1)+facet_wrap(assay~., ncol = 1)+theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 30, vjust=1,hjust = 1), panel.background = element_rect(fill="gray"))+geom_text(color="black")+coord_fixed()
+
+
+health_overview_pval4 <- ggplot(filter(health_pvals,metric=="count_obs_exp_percent"), aes(family,cell_type, fill=mean_p, label=ifelse(mean_padj<0.05,"*","" )))+labs(title = "Health difference pval", x="TE family", y="Cell category")+geom_tile(color="white",lwd = 1, linetype = 1)+theme_classic2()+scale_fill_viridis_c(name="pval",option="A", trans="log10",  direction = -1)+facet_wrap(assay~., ncol = 1)+theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 30, vjust=1,hjust = 1), panel.background = element_rect(fill="gray"))+geom_text(color="black")+coord_fixed()
+health_overview_pval4
+
+health_overview_pval <- ggplot(filter(health_pvals,metric=="count_obs_exp_percent"), aes(family,cell_type, fill=mean_p, label=ifelse(mean_padj<0.05,"*","" )))+labs(title = "Health difference pval", x="TE family", y="Cell category")+geom_tile(color="white",lwd = 1, linetype = 1)+theme_classic2()+scale_fill_viridis_c(name="pval",option="A", trans="log10",limits = c( 1e-7, 1),  direction = -1)+facet_wrap(assay~., ncol = 1)+theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 30, vjust=1,hjust = 1), panel.background = element_rect(fill="gray"))+geom_text(color="black")+coord_fixed()#oob = oob_squish,
+health_overview_pval
+
+
+health_overview_pval2 <- ggplot(filter(health_pvals,metric=="count_obs_exp_percent"), aes(cell_type, family,fill=mean_p, label=ifelse(mean_padj<0.05,"*","" )))+labs(title = "Health difference pval", x="TE family", y="Cell category")+geom_tile(color="white",lwd = 1, linetype = 1)+theme_classic2()+scale_fill_viridis_c(name="pval",option="A", trans="log10",limits = c( 1e-7, 1),  direction = -1)+facet_wrap(assay~., ncol = 1)+theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 45, vjust=1,hjust = 1), panel.background = element_rect(fill="gray"))+geom_text(color="black")+coord_fixed()#oob = oob_squish,
+health_overview_pval2
+
+```
+
+```{r table_health2, fig.width=20, fig.height=10}
+
+health_overview_pval3 <- ggplot(filter(health_pvals,metric=="count_obs_exp_percent"), aes(family,cell_type, fill=mean_p, label=ifelse(mean_padj<0.05,"*","" )))+labs(title = "Health difference pval", x="TE family", y="Cell category")+geom_tile(color="white",lwd = 1, linetype = 1)+theme_classic2()+scale_fill_viridis_c(name="pval",option="A", trans="log10",limits = c(1, 1e-7),  direction = -1)+facet_wrap(assay~., nrow = 1)+theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 45, vjust=1,hjust = 1), panel.background = element_rect(fill="gray"))+geom_text(color="black")+coord_fixed()#oob = oob_squish,
+health_overview_pval3
+
+```
+
+
+## Health Figures
+
+```{r, results="asis"}
+
+print_DT(filter(health_pvals,metric=="count_obs_exp_percent", as.numeric(as.character(differences))>0))
+
+healthpie_df <- count(filter(health_pvals,metric=="count_obs_exp_percent"), differences) %>% mutate(prop=n/sum(n))#, batch
+f3_sup1 <- ggplot(healthpie_df, aes(x=0, y = prop,fill= as.factor(differences),label = paste0(differences,"\n", n)))+
+  labs( y = "Differences")+
+  scale_fill_manual(name="Differences", values = health_dif_pal, na.value = "gray" )+
+  scale_y_continuous(labels = scales::percent)+
+  geom_bar(position = "fill",stat = "identity", width = 1)+theme_classic2()+geom_text( aes(x=0.15), position = position_fill(vjust = 0.5), size=4,  color = "black")+coord_polar("y")+theme_void()+
+  theme(axis.title.y = element_blank(), legend.position = "none",legend.key.size = unit(0.2,"cm"))
+f3_sup1
+
+healthpie_df <- count(filter(health_pvals,metric=="count_obs_exp_percent"), differences2) %>% mutate(prop=n/sum(n), differences3 = ifelse(differences2,"Health difference", "No difference"))#, batch
+f3_sup1_2_2 <- ggplot(healthpie_df, aes(x=0, y = prop,fill= differences2,label = paste0(ifelse(differences2,"Health difference", "No difference"),"\n", round(prop*100), "%")))+
+  labs( title = "Cell type differences due to health status")+
+  scale_fill_manual(name="Differences", values = health_dif_pal, na.value = "gray" )+
+  scale_y_continuous(labels = scales::percent)+
+  geom_bar(position = "fill",stat = "identity", width = 1)+theme_classic2()+geom_text( aes(x=0.15), position = position_fill(vjust = 0.5),   color = "black")+coord_polar("y")+theme_void()+
+  theme(axis.title.y = element_blank(), legend.position = "none",legend.key.size = unit(0.2,"cm"))
+#size=6,
+f3_sup1_2_2
+
+# Bar
+#paste0(ifelse(differences2,"Health difference", "No difference"),"\n", round(prop*100), "%")
+f3bar_sup1_2_2 <- ggplot(healthpie_df, aes(x=differences3, y = prop,fill= differences2, label = paste0( round(prop*100, digits = 1),"%","\n","(",n,")") ))+
+  labs( title = "Cell type differences due to health status", y = "Comparison percentage (%)", x="")+
+  scale_fill_manual(name="Differences", values = health_dif_pal, na.value = "gray" )+
+  scale_y_continuous(labels = scales::percent)+
+  geom_col()+theme_classic2()+
+  geom_text(vjust=0, nudge_y = 0.01,color = "black")+
+  #geom_text( aes(x=0.15), position = position_fill(vjust = 0.5),   color = "black")+coord_polar("y")+theme_void()+
+  theme(legend.position = "none",legend.key.size = unit(0.2,"cm"))
+#size=6,
+f3bar_sup1_2_2
+
+
+
+f3_sup1_2_3 <- ggplot(filter(healthpie_df, !is.na(differences2)), aes(x=0, y = prop,fill= differences2,label = paste0(ifelse(differences2,"Health difference", "No difference"),"\n", round(prop/sum(prop)*100), "%")))+
+  #labs( title = "Cell type differences due to health status")+
+  scale_fill_manual(name="Differences", values = health_dif_pal, na.value = "gray" )+
+  scale_y_continuous(labels = scales::percent)+
+  geom_bar(position = "fill",stat = "identity", width = 1)+theme_classic2()+geom_text( aes(x=0.15), position = position_fill(vjust = 0.5),   color = "black")+coord_polar("y")+theme_void()+
+  theme(axis.title.y = element_blank(), legend.position = "none",legend.key.size = unit(0.2,"cm"))
+f3_sup1_2_3
+
+print_DT(healthpie_df)
+
+healthpie_df <- count(filter(health_pvals,metric=="count_obs_exp_percent"), differences, assay) %>% mutate(prop=n/sum(n))#, 
+f3_sup1_2 <- ggplot(healthpie_df, aes(x=0, y = prop,fill= as.factor(differences),label = paste0(differences,"\n", n)))+
+  labs( y = "Differences")+
+  scale_fill_manual(name="Differences", values = health_dif_pal, na.value = "gray" )+
+  scale_y_continuous(labels = scales::percent)+
+  geom_bar(position = "fill",stat = "identity", width = 1)+theme_classic2()+geom_text( aes(x=0.15), position = position_fill(vjust = 0.5), size=4,  color = "black")+coord_polar("y")+theme_void()+
+  theme(axis.title.y = element_blank(), legend.position = "none",legend.key.size = unit(0.2,"cm"))+
+  facet_wrap(~assay)
+f3_sup1_2
+
+print_DT(healthpie_df)
+
+
+```
+
+
+### Top Disease impacting (4)
+
+```{r, fig.width=16, fig.height=18}
+health_differenced_top <- filter(mutate(health_pvals,triplet = paste0(cell_type,family,assay),triplet_n = paste(family,assay,cell_type, sep = "\n")),metric=="count_obs_exp_percent") %>% slice_min(order_by = mean_p, n = 4, with_ties = F)
+
+print(health_differenced_top)
+# & differences2==T
+
+  this_data_b <- filter(mutate(te_counts_table,triplet = paste0(cell_type,family,assay)), triplet %in% health_differenced_top$triplet) %>% group_by(sample_name,triplet,assay, batch, cell_full, cell_type, proxy_health=a_samp_info[sample_name,]$proxy_health, family) %>% summarise(count_obs_exp_percent = sum(count_obs_exp_percent), count = sum(count), expected_count = sum(expected_count)) %>% ungroup() %>% mutate(count_fold_change = count/expected_count,triplet_n = paste(family,assay,cell_type, sep = "\n"), proxy_health = as.factor(ifelse(proxy_health=="Healthy/None","None",proxy_health)))
+
+print(this_data_b)
+
+f3_health_differenced_top <- ggplot()
+f3_health_differenced_top_man <- ggplot()
+f3_health_differenced_top_def <- ggplot()
+
+if (nrow(this_data_b)>0){
+  #compare_means()
+  pval_element_p_health <- compare_means(count_obs_exp_percent~proxy_health,this_data_b, group.by = c("family", "cell_type", "assay"), p.adjust.method = "bonferroni")%>%
+ mutate(p.signif.adj =symnum(p.adj, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1), symbols = c("****", "***", "**", "*", "ns")))
+f3_health_differenced_top <- ggplot(this_data_b, aes(proxy_health, count_obs_exp_percent, fill = proxy_health))+geom_boxplot()+scale_fill_manual(values = health_palette)+facet_wrap(~triplet_n, scales = "free", ncol = 1)+stat_summary(
+        mapping = aes(fill=NULL),
+        fun.data = stat_box_data,
+        #fun.args = list(topy = max(data$count_obs_exp_percent)),
+        geom = "text",
+        hjust = 0.5,
+        vjust = 0.5,
+        size = 3
+      )+labs(x="Health Status", y="Observed-Expected")+guides(fill="none")+theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"),strip.text.x = element_text(size = 8))
+f3_health_differenced_top
+
+#Manual annot
+f3_health_differenced_top_man <- f3_health_differenced_top+geom_text(data = filter(health_differenced_top, triplet %in% this_data_b$triplet), aes(x=1.5,y=Inf, label = paste0("p=",signif(mean_padj, 2)), fill=NULL), vjust = "inward")
+
+print(f3_health_differenced_top_man)
+#default
+f3_health_differenced_top_def <- f3_health_differenced_top+stat_compare_means(label = "p.format", method = "kruskal.test", label.x.npc = 0.5, hjust=0.5,vjust=1, hide.ns = F)
+
+print(f3_health_differenced_top_def)
+}#pval_element_p_health
+#stat_compare_means(label = "p.format", label.x.npc = 0.5, hjust=0.5,vjust=1, hide.ns = F)
+#ifelse(p.signif.adj!="ns",p.signif.adj,"")
+```
+
+## Health Plot overview
+
+```{r, fig.width=16, fig.height=20,}
+#(f3_sup1_2_2/f3_health_differenced_top_man)|health_overview_pval+plot_annotation(tag_levels = 'A')
+
+((f3_sup1_2_2/f3_health_differenced_top_man)|health_overview_pval)+plot_annotation(tag_levels = 'A')
+
+f3h_layout <- "
+ACCC
+ACCC
+BCCC
+BCCC
+BCCC
+BCCC
+"
+
+((f3_sup1_2_2+f3_health_differenced_top_man)+health_overview_pval+plot_layout(design = f3h_layout))+plot_annotation(tag_levels = 'A')
+
+
+(f3_sup1_2_2/f3_health_differenced_top_def)|health_overview_pval+plot_annotation(tag_levels = 'A')
+
+f3h_layout <- "
+ACCC
+ACCC
+BCCC
+BCCC
+BCCC
+BCCC
+"
+
+(f3_sup1_2_2+f3_health_differenced_top_def)+health_overview_pval+plot_layout(design = f3h_layout)+plot_annotation(tag_levels = 'A')
+
+
+f3h_layout <- "
+ACCC
+ACCC
+BCCC
+BCCC
+BCCC
+BCCC
+"
+
+(f3_sup1_2_2+f3_health_differenced_top_def)+health_overview_pval2+plot_layout(design = f3h_layout)+plot_annotation(tag_levels = 'A')
+
+
+```
+
+
+
+```{r, eval = F}
+te_counts_table %>% filter(family=="ERV1", assay=="H3K27ac", cell_type=="epithelial cell derived cell line") %>% distinct(sample_name)
+```
+
+
+
+
+## Compiled Figure 4
+
+Health plots ommitted (Subset data (default) incompatible)
+
+```{r comp_fig4, fig.width=18, fig.height=16}
+f3_2_a1_2*theme(legend.position = "none") / f3_2_a3*theme(legend.position = "none")  /f3_2_b1_2*theme(legend.position = "none") +plot_annotation(tag_levels = 'A') 
+
+
+f3_2_a1_2*theme(legend.position = "none") / f3_2_a3*theme(legend.position = "none")  /f3_2_b1_2*theme(legend.position = "none")/ f3_2_b3*theme(legend.position = "none")  +plot_annotation(tag_levels = 'A') 
+
+```
+
+```{r comp_fig4_v2, fig.width=18, fig.height=18}
+f3_2_a1_2*theme(legend.position = "none") / f3_2_a3*theme(legend.position = "none")  /f3_2_b1_2*theme(legend.position = "none") +plot_annotation(tag_levels = 'A') 
+
+
+f3_2_a1_2*theme(legend.position = "none") / f3_2_a3*theme(legend.position = "none")  /f3_2_b1_2*theme(legend.position = "none")/ f3_2_b3*theme(legend.position = "none")  +plot_annotation(tag_levels = 'A') 
+
+```
+
+
+
+# Figure 5: Specificity and TE Candidates
+
+## Enrichment across cell types
+
+```{r cell_heatmap_setup_full}
+tmp_full_matrix <- filter(ungroup(mutate(clean_te_df, cell_type = as.character(a_samp_info[as.character(clean_te_df$sample_name),]$cell_type),instances = rmsk_table_agg[name,]$count, instance_prop = count/instances, pseudoname = paste0( assay, cell_type))), family!="Simple_repeat" ) %>% group_by(assay, name, cell_type, pseudoname, sample) %>% summarise(count_obs_exp_percent = sum(count_obs_exp_percent), instance_count=sum(count), enriched_count = sum(valid), sample_count = n(), bases = sum(bases)) %>% group_by(assay, name, cell_type, pseudoname) %>% summarise(count_obs_exp_percent = mean(count_obs_exp_percent), enriched_mean = mean(enriched_count/sample_count), enriched_count_prop = sum(enriched_count>0)/n(), enriched_count = sum(enriched_count), sample_count = sum(sample_count), mean_bases = mean(bases), sum_bases = sum(bases), mean_instance = mean(instance_count)) %>% mutate(instances2 = rmsk_table_agg[name,]$count, instance_prop = mean_instance/instances2)
+
+h_enr_prop_full_matrix <- to_heatmatrix(tmp_full_matrix, list(("pseudoname"), ("name")),"enriched_mean")
+
+
+tmpf_anot = rowAnnotation(cell_type = tmp_full_matrix[match(rownames(h_enr_prop_full_matrix),tmp_full_matrix$pseudoname),]$cell_type,
+                           col = list(cell_type = cell_palette),
+                           name = "Cell Types",
+                          annotation_label = "Cell Types",
+                         show_annotation_name = FALSE,
+                         show_legend = F
+                           )
+
+
+tmpf_anot_top = HeatmapAnnotation(
+    show_annotation_name = FALSE,
+    repeats = unlist(lapply(colnames(h_enr_prop_full_matrix), 
+                                              function(x) ifelse(repeat_to_family[[x]] %in% major_families,repeat_to_family[[x]],"Other"))),
+    col = list(repeats = family_palette),
+    name = "TE family"
+    )
+```
+
+```{r, fig.width=13, fig.height=8}
+
+
+col_fun = colorRamp2(c(min(h_enr_prop_full_matrix), seq(min(h_enr_prop_full_matrix)+1E-10, max(h_enr_prop_full_matrix), length.out = 5)), c("gray90", brewer.pal(5, "OrRd")))
+f3_c_full <- Heatmap(h_enr_prop_full_matrix,
+        name = "Proportion \nof samples enriched",#"Mean proportion \nof enriched TE \nin subfamily",
+        #cluster_columns = dend,
+        #column_order = colnames(repeat_heatmap_age_sorted),
+        top_annotation = tmpf_anot_top , 
+        #bottom_annotation = bot_ha,
+        left_annotation = tmpf_anot,
+        row_split = tmp_full_matrix[match(rownames(h_enr_prop_full_matrix),tmp_full_matrix$pseudoname),]$assay,
+        row_labels = tmp_full_matrix[match(rownames(h_enr_prop_full_matrix),tmp_full_matrix$pseudoname),]$cell_type,
+        show_column_dend = T,
+        show_row_names = F,
+        show_column_names = F,
+        row_title_side = "left",
+        row_names_side = "left",
+        row_title_gp = gpar( fontsize = 8),#12
+        column_names_gp = gpar( fontsize = 5),
+        #row_names_gp = gpar( fontsize = 6),
+        #column_names_gp = gpar( fontsize = 20),
+        row_gap = unit(2, "mm"),
+        show_row_dend = F,
+        col = col_fun,#brewer.pal(5, "OrRd")
+        heatmap_legend_param = list(labels_gp = gpar(fontsize = 8))
+        )
+f3_c_full
+```
+
+Get the number of cell types in which each TE subfamilies is enriched.
+
+```{r, fig.width=13, fig.height=8}
+select_families <- c("Alu","L1","L2","ERVL","ERVK","ERV1","ERVL-MaLR","SVA","MIR")
+
+cell_type_enriched_count <- tmp_full_matrix %>% group_by(assay, name) %>% summarise(enriched_cell_types = sum(enriched_count>0), enriched_count_prop = sum(enriched_count>0)/n(), enriched_count = sum(enriched_count), sample_count = sum(sample_count), sum_bases = sum(sum_bases), mean_bases = mean(mean_bases), enriched_instance = sum(instance_prop>0.5), mean_instance = mean(mean_instance)) %>% mutate(instances2 = rmsk_table_agg[name,]$count, instance_prop = mean_instance/instances2, assay = factor(assay, levels = assay_order))#%>% summarise(enriched_cell_types = sum(enriched_count>0), enriched_count_prop = sum(enriched_count>0)/n(), enriched_count = sum(enriched_count), sample_count = sum(sample_count))
+
+f3_d_full <- ggplot(filter(cell_type_enriched_count,enriched_cell_types>0, repeat_to_family[name] %in% select_families), aes(repeat_to_family[name], fill = as.factor(enriched_cell_types)))+ geom_histogram(stat = "count")+
+  labs( x = "TE family")+
+  theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+geom_hline(yintercept = 0, lwd = 1, color = "black")+theme(legend.key.size = unit(0.5,"lines"))+
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5,hjust = 1))+scale_fill_manual(name = "Number of\ncell type \nenriched",values = c(brewer.spectral(max(6,cell_type_enriched_count$enriched_cell_types))))+  facet_grid(.~assay)
+f3_d_full
+
+
+ggplot(filter(cell_type_enriched_count,repeat_to_family[name] %in% select_families), aes(repeat_to_family[name], fill = as.factor(enriched_cell_types)))+ geom_histogram(stat = "count")+
+  labs( x = "TE family")+
+  theme_classic2(base_size = 16)+theme(panel.background = element_rect(fill = "white", colour = "black"))+geom_hline(yintercept = 0, lwd = 1, color = "black")+theme(legend.key.size = unit(0.5,"lines"))+
+  theme(axis.text.x = element_text(size=12,angle = 90, vjust=0.5,hjust = 1))+scale_fill_manual(name = "Number of\ncell type \nenriched",values = c("gray",brewer.spectral(max(6,cell_type_enriched_count$enriched_cell_types))))+  facet_grid(.~assay)
+
+```
+
+
+```{r,  fig.width=12, fig.height=8}
+
+cell_type_enriched_count_full <- cell_type_enriched_count
+
+cell_type_enriched_cumul <- cell_type_enriched_count %>% group_by(fam = repeat_to_family[name], name, assay) %>% summarise(enriched_cell_types = sum(enriched_cell_types))
+
+
+```
+
+## Cell type specificity breakdown
+
+```{r}
+
+
+cell_type_enriched_count_full_pie <- cell_type_enriched_count_full %>%
+mutate(countfactor=cut(enriched_cell_types, breaks=c(-1, 0, 5, 30, 60),
+                          labels=c("0", "<=5", "5-30", ">30"))) %>%
+  mutate(countfactor=factor(as.character(countfactor), levels=rev(levels(countfactor))),
+         countfactor2=factor(as.character(countfactor), levels=list( "<=5", "5-30", ">30","0")))# change level order
+
+enr_count_df <- cell_type_enriched_count_full_pie %>% ungroup() %>% count(countfactor) %>% mutate(prop=n/sum(n))#, batch
+f3_sup_enrc_pie_solo <- ggplot(enr_count_df, aes(x=0, y = prop,fill= as.factor(countfactor),label = paste0(countfactor,"\n", n)))+
+  labs( y = "Differences")+
+  scale_fill_manual(name="Differences", values = c("0"="gray","<=5"="#d53e4f", "5-30"="#fdae61", ">30"="#3288bd"),  na.value = "gray" )+
+  scale_y_continuous(labels = scales::percent)+
+  geom_bar(position = "fill",stat = "identity", width = 1)+theme_classic2()+geom_text( aes(x=0.15), position = position_fill(vjust = 0.5), size=6,  color = "black")+coord_polar("y")+theme_void()+
+  theme(axis.title.y = element_blank(), legend.position = "none",legend.key.size = unit(0.2,"cm"))
+f3_sup_enrc_pie_solo
+
+f3bar_sup_enrc_pie_solo <- ggplot(enr_count_df, aes(x=as.factor(countfactor), y = n,fill= as.factor(countfactor),label = paste0(n,"\n(", round(prop*100, digits = 1),"%)")))+
+  labs( y = "Subfamily count", x="Number of cell types enriched (specificity)")+
+  scale_fill_manual(name="Differences", values = c("0"="gray","<=5"="#d53e4f", "5-30"="#fdae61", ">30"="#3288bd"),  na.value = "gray" )+
+  scale_y_continuous(expand = expansion(mult = c(0.01, .3)))+
+  scale_x_discrete(limits = c( "<=5", "5-30", ">30","0"))+
+  #scale_y_continuous(labels = scales::percent)+
+  geom_col()+theme_classic2()+geom_text(vjust=0, nudge_y = 10,color = "black")+
+  theme( legend.position = "none",legend.key.size = unit(0.2,"cm"))
+f3bar_sup_enrc_pie_solo
+
+
+
+enr_count_df <- cell_type_enriched_count_full_pie %>% group_by(assay) %>% count(countfactor) %>% mutate(prop=n/sum(n))#, batch
+f3_sup_enrc_pie <- ggplot(enr_count_df, aes(x=0, y = prop,fill= as.factor(countfactor),label = paste0(countfactor,"\n", n)))+
+  labs( y = "Differences")+
+  scale_fill_manual(name="Differences", values = c("0"="gray","<=5"="#d53e4f", "5-30"="#fdae61", ">30"="#3288bd"),  na.value = "gray" )+
+  scale_y_continuous(labels = scales::percent)+
+  geom_bar(position = "fill",stat = "identity", width = 1)+theme_classic2()+geom_text( aes(x=0.15), position = position_fill(vjust = 0.5), size=4,  color = "black")+coord_polar("y")+theme_void()+
+  theme(axis.title.y = element_blank(), legend.position = "none",legend.key.size = unit(0.2,"cm"))+facet_wrap(~assay)
+f3_sup_enrc_pie
+
+
+#    geom_text( color = "black")+
+f3bar_sup_enrc_pie <- ggplot(enr_count_df, aes(x=as.factor(countfactor), y = n,fill= as.factor(countfactor),label = paste0(n,"\n(", round(prop*100, digits = 1),"%)")))+
+  labs(  y = "Subfamily count", x="Number of cell types enriched (specificity)")+
+  scale_fill_manual(name="Differences", values = c("0"="gray","<=5"="#d53e4f", "5-30"="#fdae61", ">30"="#3288bd"),  na.value = "gray" )+
+      scale_y_continuous(expand = expansion(mult = c(0.01, .3)))+
+  scale_x_discrete(limits = c( "<=5", "5-30", ">30","0"))+
+  #scale_y_continuous(labels = scales::percent)+
+  geom_col()+theme_classic2()+geom_text(aes(y = pmax(n,max(n)*0.05)),vjust=0, nudge_y = 10,color = "black")+
+  theme( legend.position = "none",legend.key.size = unit(0.2,"cm"),strip.background = element_blank(),panel.spacing = unit(3, "lines"))+facet_wrap(~assay)
+f3bar_sup_enrc_pie
+```
+
+
+## Cadidates Selection
+
+For cadidates we selected contexts (cell types - TEs) enriched in 5 or less cell types. (deemed specific)
+
+```{r, fig.width=15, fig.height=20,  results="asis"}
+
+the_candidates2 <- filter(cell_type_enriched_count_full, enriched_cell_types<=5, enriched_cell_types>0)
+
+the_candidates_main <- clean_signif_te_df %>% filter(paste0(name,assay) %in% paste0(the_candidates2$name,the_candidates2$assay), instances_rmsk>100)
+
+digin_list <- c()
+```
+
+Iterate through the histone and select the most extreme (1st and 95th percentile) of TE enrichment in terms of Obs-Exp and Fold change
+
+### TE candidates {.tabset .tabset-fade}
+
+```{r  fig.width=13,fig.height=16,  results="asis"}
+cassay_list <- c("H3K36me3", "H3K27ac","H3K4me1","H3K4me3","H3K27me3","H3K9me3")
+
+final_candidates2 <- NULL
+
+for (cassay in cassay_list) {
+      
+  cat(paste0("#### ",cassay))
+  cat("\n\n")
+  
+  
+  d <- filter(the_candidates_main,family!="Simple_repeat", assay==cassay) %>% group_by(name,family,cell_type) %>% summarise(count_fold_change = mean(count_fold_change), count_obs_exp_percent = mean(count_obs_exp_percent), time_over= mean(time_over), n=n())  %>% ungroup() %>% mutate( pval = 1-(time_over/1000),  lnpval = -log10(pval), signif= pval<1E-2,top_signi = lnpval>quantile(lnpval,0.99, na.rm = T),  top_fold = count_fold_change>quantile(count_fold_change,0.95, na.rm = T), top_obs = (count_obs_exp_percent>quantile(count_obs_exp_percent,0.95, na.rm = T) ) ) %>% ungroup()
+  
+    if(nrow(d)>0){
+    fold = quantile(d$count_fold_change,0.95, na.rm = T)
+    obsmax = quantile(d$count_obs_exp_percent,0.95, na.rm = T)
+    obsmin = quantile(d$count_obs_exp_percent,0.01, na.rm = T)
+    dlim <- data.frame(fold=fold, obsmin= obsmin, obsmax=obsmax)
+
+    
+    cat("\n\n")
+    
+    print_DT(d)
+    
+    cat("\n\n")
+    
+    print_DT(subset(d, top_obs | top_fold))
+    
+    cat("\n\n loosened (95percentile) \n")
+    
+    print_DT(filter(d, (count_obs_exp_percent>quantile(count_obs_exp_percent,0.95, na.rm = T) ) | count_fold_change>quantile(count_fold_change,0.95, na.rm = T)))
+    
+    cat("\n\n")
+    
+    cat(paste0("\n fold: ",quantile(d$count_fold_change,0.95, na.rm = T),"\n Obs-exp: ",quantile(d$count_obs_exp_percent,0.95, na.rm = T)))
+    
+    cat("\n\n")
+    
+    if (is.null(final_candidates2))
+    {
+      final_candidates2 <- mutate(subset(d, top_obs | top_fold), assay=cassay)
+    }
+    else
+    {
+      final_candidates2 <- rbind( final_candidates2, mutate(subset(d, top_obs | top_fold), assay=cassay))
+    }
+    
+  }
+}
+cat("\n\n")
+
+
+
+```
+
+
+## TE surplus candidates
+
+Cell types in which TE enrichment was much higher than the general mean
+
+```{r fig.width=13,fig.height=16, }
+d <- filter(clean_signif_te_df, family!="Simple_repeat") %>% group_by(name,family,assay,cell_type) %>% summarise(count_fold_change = mean(count_fold_change), count_obs_exp_percent = mean(count_obs_exp_percent), time_over= mean(time_over), n=n())  %>% ungroup() #%>% mutate( pval = 1-(time_over/1000),  lnpval = -log10(pval), signif= pval<1E-2,top_signi = lnpval>quantile(lnpval,0.99, na.rm = T),  top_fold = -log10(count_fold_change)>quantile(-log10(count_fold_change),0.99, na.rm = T), top_obs = (count_obs_exp_percent>quantile(count_obs_exp_percent,0.99, na.rm = T) | count_obs_exp_percent<quantile(count_obs_exp_percent,0.01, na.rm = T) ) )
+
+# get the means
+
+d <- d %>% group_by(name,family,assay) %>% mutate(cell_mean = mean(count_obs_exp_percent), cell_mean_fold=mean(count_fold_change), cell_mean_n = n(), cell_max=max(count_obs_exp_percent), is_max = cell_max==count_obs_exp_percent, cell_mean_delta = count_obs_exp_percent-cell_mean, cell_mean_fold_delta=count_fold_change-cell_mean_fold) %>% ungroup()
+
+
+f3_new_5 <- ggplot(slice_max(d, order_by = cell_mean_delta, n=20), aes(reorder(paste0(cell_type,"-",name), cell_mean_delta),cell_mean_delta, label = reorder(paste0(name,"  |  ",cell_type), cell_mean_delta), fill=family, shape = assay))+
+  geom_col()+scale_y_continuous(labels = scales::percent)+
+  coord_flip()+theme_classic2()+theme(axis.title.y = element_blank(),axis.text.y = element_blank())+labs(title="Surplus enrichment from mean", y="Obs-Exp change delta")+ scale_fill_manual(name = "TE family",values = family_palette)+theme(legend.position = "right")+facet_grid(assay~., scales = "free", space = "free")+geom_text(aes(y=0.001),hjust=0,color="black")
+
+f3_new_5
+
+f3_new_6 <- ggplot(slice_max(d, order_by = cell_mean_fold_delta, n=20), aes(reorder(paste0(cell_type,"-",name), cell_mean_fold_delta),cell_mean_fold_delta, label = reorder(paste0(name,"  |  ",cell_type), cell_mean_fold_delta), fill=family, shape = assay))+
+  geom_col()+scale_x_discrete()+
+  coord_flip()+theme_classic2()+theme(axis.title.y = element_blank(), axis.text.y = element_blank())+labs(title="Surplus fold change from mean", y="Fold change delta")+ scale_fill_manual(name = "TE family",values = family_palette)+theme(legend.position = "right")+facet_grid(assay~., scales = "free", space = "free")+geom_text(aes(y=0.1),hjust=0,color="black")
+
+f3_new_6
+
+
+
+```
+
+
+
+Merge the candidates from surplus (more than general enrichment in other cell types) and 
+restrain the candidates
+
+
+```{r, results="asis"}
+final_candidates4 <-full_join(mutate(final_candidates2, source="outliers"),
+full_join(slice_max(mutate(d,source="mean_delta"), order_by = cell_mean_delta, n=20),
+slice_max(mutate(d,source="fold_delta"), order_by = cell_mean_fold_delta, n=20)),
+by = c("name", "assay", "family", "cell_type")
+)
+
+final_candidates4
+
+final_candidates4 <- mutate(final_candidates4, is_fold_delta=(!is.na(source.y) & source.y=="fold_delta"), is_mean_delta=(!is.na(source.y) & source.y=="mean_delta"), top_fold = ifelse(is.na(top_fold),F,top_fold),top_obs = ifelse(is.na(top_obs),F,top_obs), method_count = (top_fold)+(top_obs)+is_fold_delta+is_mean_delta)
+
+colnames(final_candidates4)
+
+#reorganize
+
+final_candidates4 <- final_candidates4 %>% mutate(count_obs_exp_percent.x = ifelse(is.na(count_obs_exp_percent.x),count_obs_exp_percent.y, count_obs_exp_percent.x), count_fold_change.x = ifelse(is.na(count_fold_change.x),count_fold_change.y, count_fold_change.x), time_over.x = ifelse(is.na(time_over.x),time_over.y, time_over.x), n.x = ifelse(is.na(n.x),n.y, n.x)) %>% select(name, family, cell_type, assay, count_obs_exp_percent=count_obs_exp_percent.x, count_fold_change=count_fold_change.x, cell_mean_delta, cell_mean_fold_delta, n=n.x,, time_over=time_over.x,  pval, top_obs, top_foldchange= top_fold, obs_surplus=is_mean_delta, foldchange_surplus=is_fold_delta, method_count)
+
+print_DT(final_candidates4)
+
+write.csv(final_candidates4, "final_triplet_candidates_2.csv")
+write.csv(final_candidates4, "PStable6_TE_candidates_full_set.csv")
+ 
+```
+
+
+Smaller subset
+
+```{r, results="asis"}
+
+final_candidates5 <-full_join(distinct(mutate(full_join(slice_max(final_candidates2, order_by = count_obs_exp_percent, n =10), slice_max(final_candidates2, order_by = count_fold_change, n =10)), source="outliers")),
+full_join(slice_max(mutate(d,source="mean_delta"), order_by = cell_mean_delta, n=10),
+slice_max(mutate(d,source="fold_delta"), order_by = cell_mean_fold_delta, n=10)),
+by = c("name", "assay", "family", "cell_type")
+)
+
+final_candidates5
+
+final_candidates5 <- mutate(final_candidates5, is_fold_delta=(!is.na(source.y) & source.y=="fold_delta"), is_mean_delta=(!is.na(source.y) & source.y=="mean_delta"), top_fold = ifelse(is.na(top_fold),F,top_fold),top_obs = ifelse(is.na(top_obs),F,top_obs), method_count = (top_fold)+(top_obs)+is_fold_delta+is_mean_delta)
+
+
+final_candidates5 <- final_candidates5 %>% mutate(count_obs_exp_percent.x = ifelse(is.na(count_obs_exp_percent.x),count_obs_exp_percent.y, count_obs_exp_percent.x), count_fold_change.x = ifelse(is.na(count_fold_change.x),count_fold_change.y, count_fold_change.x), time_over.x = ifelse(is.na(time_over.x),time_over.y, time_over.x), n.x = ifelse(is.na(n.x),n.y, n.x)) %>% select(name, family, cell_type, assay, count_obs_exp_percent=count_obs_exp_percent.x, count_fold_change=count_fold_change.x, cell_mean_delta, cell_mean_fold_delta, n=n.x,, time_over=time_over.x,  pval, top_obs, top_foldchange= top_fold, obs_surplus=is_mean_delta, foldchange_surplus=is_fold_delta, method_count)
+
+print_DT(final_candidates5)
+
+write.csv(final_candidates5, "final_triplet_candidates_5.csv") #"PStable5_TE_candidates_full_set.csv"
+ 
+```
+
+
+The output table `final_triplet_candidates_5.csv` contains the candidates.
+Potentially interesting TE-Cell type-Histone combinations where the TE enrichment was extreme or largely differed from the rest.
+
+
+## Plot candidates
+
+
+```{r fig.height=8, results="asis"}
+final_candidates5_melt <- melt(final_candidates5, measure.vars=c("top_obs", "obs_surplus", "top_foldchange", "foldchange_surplus" ),variable.name="method")
+
+
+f3_new_candidates_all <- ggplot(final_candidates5_melt, aes(method,paste0(assay," ",name," ", cell_type), fill=value))+geom_tile(color="black")+scale_fill_manual(values=c( "white","dodgerblue"))+theme_classic2()+theme(axis.title = element_blank(),axis.text.x = element_text(angle = 45, vjust=1,hjust = 1))+scale_x_discrete(labels = c("TS.EN","S.EN","TS.FC","S.FC"))
+
+f3_new_candidates_all+coord_fixed()
+
+f3_new_candidates_all2 <- ggplot(final_candidates5_melt, aes(method,paste0(name," ", cell_type), fill=value))+geom_tile(color="black")+scale_fill_manual(values=c( "white","dodgerblue"))+theme_classic2(base_size = 16)+theme(axis.title = element_blank(),axis.text.x = element_text(angle = 45, vjust=1,hjust = 1))+scale_x_discrete(labels = c("TS.EN","S.EN","TS.FC","S.FC"))
+
+f3_new_candidates_all2+coord_fixed()
+
+
+
+f3_new_candidates <- ggplot(final_candidates5_melt %>% slice_max(order_by = method_count, n=20), aes(method,paste0(name," ", cell_type), fill=value))+geom_tile(color="black")+scale_fill_manual(values=c( "white","dodgerblue"))+theme_classic2(base_size = 16)+theme(axis.title = element_blank(),axis.text.x = element_text(angle = 45, vjust=1,hjust = 1))+facet_grid(assay~.,scales="free", space="free")+scale_x_discrete(labels = c("TS.EN","S.EN","TS.FC","S.FC"))
+
+f3_new_candidates#+coord_fixed()
+
+final_candidates5_melt <- melt(final_candidates5 %>% slice_max(order_by = method_count, n=40, with_ties=F) , measure.vars=c("top_obs", "obs_surplus", "top_foldchange", "foldchange_surplus" ),variable.name="method")
+
+f3_new_candidates2 <- ggplot(final_candidates5_melt, aes(method,paste0(name," ", cell_type), fill=value))+geom_tile(color="black")+scale_fill_manual(values=c( "white","dodgerblue"))+theme_classic2(base_size = 16)+theme(axis.title = element_blank(),axis.text.x = element_text(angle = 45, vjust=1,hjust = 1))+facet_grid(assay~.,scales="free", space="free")+scale_x_discrete(labels = c("TS.EN","S.EN","TS.FC","S.FC"))
+
+f3_new_candidates2
+```
+
+
+```{r, fig.width=21, fig.height=5}
+final_fig_allcandidates <- f3_new_candidates_all*coord_flip()*facet_grid(~assay, scales = "free_x", space = "free")
+final_fig_allcandidates
+
+
+f3_new_candidates*coord_flip()*facet_grid(~assay, scales = "free_x", space = "free")
+
+f3_new_candidates_all2*coord_flip()*facet_grid(~assay, scales = "free_x", space = "free")
+```
+
+## Candidate plotting
+
+```{r fig.width=15, }
+
+
+f3_new_2 <- ggplot(the_candidates2 %>% group_by(family = repeat_to_family[name]) %>% summarise(count=n()) %>% ungroup() %>% slice_max(order_by = count, n=10), aes(reorder(family,count), count, fill = family))+geom_col()+coord_flip()+theme_classic2()+scale_fill_manual(name = "Family", values = family_palette)+theme(legend.position = "none")+labs(x="TE Family", y="Subfamilies specifically enriched")
+
+f3_new_2
+
+f3_new_2_full <- ggplot(the_candidates2 %>% group_by(family = repeat_to_family[name]) %>% summarise(count=n()) %>% ungroup(), aes(reorder(family,count), count, fill = family))+geom_col()+coord_flip()+theme_classic2()+scale_fill_manual(name = "Family", values = family_palette)+theme(legend.position = "none")+labs(x="TE Family", y="Specifically enriched")
+
+f3_new_2_full
+
+
+d <- filter(the_candidates_main,family!="Simple_repeat") %>% group_by(name,family,assay,cell_type, tfamily) %>% summarise(count_fold_change = mean(count_fold_change), count_obs_exp_percent = mean(count_obs_exp_percent), time_over= mean(time_over), n=n()) %>% ungroup() %>% group_by(assay) %>% mutate( pval = 1-(time_over/1000),  lnpval = -log10(pval), signif= pval<1E-2,top_signi = lnpval>quantile(lnpval,0.99, na.rm = T),  top_fold = count_fold_change>quantile(count_fold_change,0.95, na.rm = T), top_obs = (count_obs_exp_percent>quantile(count_obs_exp_percent,0.95, na.rm = T) ) ) %>% ungroup()
+
+f3_new_1 <- ggplot(d, aes(count_obs_exp_percent, count_fold_change, label = paste0(name,"\n",cell_type), color = family, alpha = (top_obs | top_fold)))+geom_point()+scale_color_manual(name = "Family", values = family_palette)+facet_grid(.~assay, scales = "free")+geom_text_repel(data=subset(d, top_obs | top_fold))+theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+scale_alpha_discrete(range = c(0.4,1))+scale_x_continuous(name = "Obs- Exp",labels = scales::percent)+scale_y_continuous(name= "Fold Change")+guides(alpha="none", color="none")
+
+f3_new_1
+
+f3_new_1s <- ggplot(filter(d,assay %in% c("H3K27ac","H3K4me3","H3K9me3")), aes(count_obs_exp_percent, count_fold_change, label = paste0(name,"\n",cell_type), color = tfamily, alpha = (top_obs | top_fold)))+geom_point()+scale_color_manual(name = "Family", values = family_palette, limits = force)+facet_grid(.~assay, scales = "free")+geom_text_repel(data=subset(filter(d,assay %in% c("H3K27ac","H3K4me3","H3K9me3")), top_obs | top_fold))+theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"))+scale_alpha_discrete(range = c(0.4,1))+scale_x_continuous(name = "Obs- Exp",labels = scales::percent)+scale_y_continuous(name= "Fold Change")+guides(alpha="none")
+
+f3_new_1s
+
+f3_new_1s2 <- ggplot(filter(d,assay %in% c("H3K27ac","H3K4me3","H3K9me3")), aes(count_obs_exp_percent, count_fold_change, label = paste0(name,"\n",cell_type), color = tfamily, alpha = (top_obs | top_fold)))+geom_point()+scale_color_manual(name = "Family", values = family_palette, limits = force)+facet_wrap(~assay, scales = "free")+geom_text_repel(data=subset(filter(d,assay %in% c("H3K27ac","H3K4me3","H3K9me3")), top_obs | top_fold))+theme_classic2()+theme(panel.background = element_rect(fill = "white", colour = "black"), legend.position = "bottom")+scale_alpha_discrete(range = c(0.4,1))+scale_x_continuous(name = "Obs- Exp",labels = scales::percent)+scale_y_continuous(name= "Fold Change")+guides(alpha="none")
+
+f3_new_1s2
+
+```
+
+
+
+
+
+## Compiled Figure 5
+
+```{r,  fig.width=15, fig.height=15}
+
+f3_layout <- "
+AAAABB
+AAAABB
+CCCCCC
+CCCCCC
+"
+
+final_fig5_candidates_v2 <- f3_d_full+ f3_sup_enrc_pie_solo  +f3_new_1s2+plot_layout(design = f3_layout)+plot_annotation(tag_levels = 'A') 
+
+final_fig5_candidates_v2
+
+#ggsave("fig_images/2025/final_fig5_candidates_v2.svg",final_fig5_candidates_v2)
+#ggsave("fig_images/2025/final_fig5_candidates_v2.pdf",final_fig5_candidates_v2)
+```
+
+
+
+
+
+
+
+
