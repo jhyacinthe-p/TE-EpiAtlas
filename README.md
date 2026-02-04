@@ -1,8 +1,10 @@
+
+
 # TE analysis
 
 Code and processed data for analyses and figures of the Hyacinthe et al (2024) preprint.
 
-Code for measurement and analysis of Transposable Element (TE) overlap in ChIP-seq samples with random simulations as controls (`analyze_peaks_p2.py`). As well as the downstream analysis adapted to apply the TE analysis to the EpiAtlas dataset.  
+Code for measurement and analysis of Transposable Element (TE) overlap in ChIP-seq samples with random simulations as controls (`analyze_peaks_p2.py`). In addition, the downstream analysis adapted to apply the TE analysis to the EpiAtlas dataset is available.  
 
 
 Usages
@@ -34,14 +36,16 @@ or
 
 be sure that bedtools is loaded
 
->module load bedtools
+>module load bedtools  
+
+prerequisite installation should be brief and take less than 10 minutes.
 
 ------
 
 If using github, library and other required files are stored seperately due their size:
 They are available in the zenodo repository as "libfiles.zip". https://doi.org/10.5281/zenodo.18343281 
 
-simply unzip lib and files folder directly within the TE-EpiAtlas folder (this repository). 
+Simply unzip lib and files folder directly within the TE-EpiAtlas folder (this repository). 
 
 (te_epiatlas_code.zip includes everything: the code, the lib and files and demo data but is much larger)
 
@@ -54,11 +58,11 @@ Small sample subset for demo purposes distributed in `demo_data`.
 
 # Usage Note
 
-The standalone analysis `analyze_peaks_p2.py` can be used  on any bed file-like input and run on a normal computer. 10 iterations take about 5 minutes runs linearly. thus it should take about 500 min (or 8h) for the 1000 iterations. If multiple process are available, it can run in parallel which should be much faster.  
+The standalone analysis `analyze_peaks_p2.py` can be used  on any bed file-like input and run on a normal computer. 10 iterations take about 5 minutes and runs linearly. Thus, it should take about 500 min (or 8h) for the 1000 iterations. If multiple process are available, it can run in parallel which should be much faster.  
 
-The applied to directory `analyze_directory.sh` scripts was made specifically to run on the EpiAtlas full dataset. the full dataset being multiple terabytes and total running time of thousands of samples for a thousand of iteration being days of runtime, it is not expected to run on normal computers. It was run on Digital Research Alliance of Canada server's Slurm system.  
+The applied to directory `analyze_directory.sh` script was made specifically to run on the EpiAtlas full dataset. The full dataset being multiple terabytes and total running time of thousands of samples for a thousand of iteration being days of runtime, it is not expected to run on normal computers. It was run on Digital Research Alliance of Canada server's Slurm system.  
 
-The content of TE_figures can be run used to output the main figures. These scripts are also closely intertwined and dependent on the EpiAtlas dataset. It was run on Digital Research Alliance of Canada server's Slurm system. takes about 5h on the full epiatlas dataset (`epiatlas_core_data.Rdata`) and about 30 min on the smaller test data (`core_data_test.Rdata`).
+The content of TE_figures can be run to output the main figures. These scripts are also closely intertwined and dependent on the EpiAtlas dataset. It was run on Digital Research Alliance of Canada server's Slurm system. It takes about 5h on the full epiatlas dataset (`epiatlas_core_data.Rdata`) and about 30 min on the smaller test data (`core_data_test.Rdata`).
 
 # Standalone
 
@@ -71,7 +75,7 @@ returns a csv table, a csv of peak distribution relative to tss and a bed file o
 >python analyze_peaks_p2.py input_file -g genome -l length -n size -r iteration_count -o output_file -p processes
 
 input_file: [str] standard bed file  
-genome: default=38 [int] 19 or 38  
+genome: default=38 [int] 38  
 lenght: default=200 [int] lenght of region directly around peak to consider  
 size: default=-1 [int] number of simulated peaks per trial. -1 sets to input peak count  
 iteration_count: default=10 [int] random iteration count, recommended 1000 (Slow).  
@@ -153,4 +157,8 @@ bedtools v2.27.1 and v2.31.0
 pybedtools v.0.11.0 and v.0.12.0  
 pandas v2.0.3  
 
-see requirements.txt and renv.lock for extended details
+see requirements.txt and renv.lock for extended details.  
+
+This tool features and includes data from UCSC genome/table browser tracks, genome data and tools.  
+https://genome.ucsc.edu/
+
